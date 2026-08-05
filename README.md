@@ -146,8 +146,11 @@ python main.py نظام.pdf --profile saudi_law --title "نظام العمل" -o
 # نطاق صفحات + وضع سريع بلا فحص حبر
 python main.py كتاب.pdf --pages 20-60 --no-ink -o جزء.md
 
-# دفعة كاملة إلى مجلد
+# دفعة كاملة إلى مجلد — الملف الفاشل يُتخطّى ولا يوقف البقية
 python main.py *.pdf -o ./md/
+
+# الكتابة فوق مخرَج موجود مسبقًا تتطلب إذنًا صريحًا
+python main.py كتاب.pdf --force
 
 # كل الخيارات
 python main.py --help
@@ -199,6 +202,8 @@ python main.py --help
 - **الجداول متعددة الأعمدة** تخرج كل خلية في سطر مستقل — مقروءة، لكنها ليست جدول Markdown.
 - **الأخطاء المطبعية في الأصل** تُنقل كما هي — الأداة أمينة للمصدر ولا تصحّح المحتوى.
 - الأداة موجَّهة للعربي، لكنها تكتشف الأسطر اللاتينية تلقائيًّا وتعاملها من اليسار لليمين.
+- **الكتب الضخمة جدًّا** (ألف صفحة فأكثر): أسطر المستند كله تُحمَّل في الذاكرة قبل البناء، لأن حساب حجم المتن الغالب والترويسات المتكررة يحتاج المستند كاملًا.
+- **الملفات المحمية بكلمة مرور** تُرفض برسالة واضحة — أزل الحماية أولًا.
 
 ---
 
@@ -214,27 +219,26 @@ PDF2MD/
 ├── requirements.txt
 ├── README.md
 ├── LICENSE
-└── src/
-    ├── core.py       محرّك الاستخراج — الرباطات، الاتجاه، الحبر، المسافات
-    ├── structure.py  طبقة البنية — العناوين، الفقرات، الحواشي، الأنماط
-    ├── gui.py        واجهة PyQt6
-    └── cli.py        منطق سطر الأوامر
+├── src/
+│   ├── core.py       محرّك الاستخراج — الرباطات، الاتجاه، الحبر، المسافات
+│   ├── structure.py  طبقة البنية — العناوين، الفقرات، الحواشي، الأنماط
+│   ├── common.py     المشترك بين الواجهتين — الحكم التشخيصي ومسار المخرَج
+│   ├── gui.py        واجهة PyQt6
+│   └── cli.py        منطق سطر الأوامر
+└── tests/            اختبارات pytest — تعمل تلقائيًا في GitHub Actions
 ```
 
 <div dir="rtl">
 
-`main.py` يضيف `src` إلى `sys.path`، فالاستيرادات داخل `src` مطلقة (`import core`) لا نسبية، ولا حاجة لتشغيل المشروع كحزمة.
+`src` حزمة بايثون عادية والاستيرادات داخلها نسبية، فتُستورد من جذر المشروع مباشرة بلا أي تلاعب بـ `sys.path`.
 
 `core.py` مستقل تمامًا ويمكن استعماله وحده:
 
 </div>
 
 ```python
-import sys
-sys.path.insert(0, "src")
-
 import fitz
-import core
+from src import core
 
 doc = fitz.open("ملف.pdf")
 for line in core.page_lines(doc[0]):
@@ -248,13 +252,21 @@ for line in core.page_lines(doc[0]):
 </div>
 
 ```python
-import sys
-sys.path.insert(0, "src")
-
-from structure import Options, convert, diagnose
+from src.structure import Options, convert, diagnose
 
 md, stats = convert("ملف.pdf", Options(profile="saudi_law", title="عنوان"))
 report = diagnose("ملف.pdf")
+```
+
+<div dir="rtl">
+
+## الاختبارات
+
+</div>
+
+```bash
+pip install pytest
+pytest -q
 ```
 
 <div dir="rtl">
@@ -353,14 +365,16 @@ PDF2MD/
 ├── requirements.txt
 ├── README.md
 ├── LICENSE
-└── src/
-    ├── core.py       extraction engine — ligatures, direction, ink, spacing
-    ├── structure.py  structure layer — headings, paragraphs, footnotes, profiles
-    ├── gui.py        PyQt6 interface
-    └── cli.py        command-line logic
+├── src/
+│   ├── core.py       extraction engine — ligatures, direction, ink, spacing
+│   ├── structure.py  structure layer — headings, paragraphs, footnotes, profiles
+│   ├── common.py     shared between CLI and GUI — diagnostics verdict, output paths
+│   ├── gui.py        PyQt6 interface
+│   └── cli.py        command-line logic
+└── tests/            pytest suite — runs automatically in GitHub Actions
 ```
 
-`main.py` adds `src` to `sys.path`, so imports inside `src` are absolute (`import core`) rather than relative, and the project never needs to run as a package.
+`src` is a regular Python package with relative imports inside — use `from src import core` or `from src.structure import Options, convert` from the project root; no `sys.path` tricks needed. Run the tests with `pytest -q`.
 
 ## License
 

@@ -9,8 +9,10 @@ gui.py — واجهة PyQt6 لأداة PDF2MD.
 تشغيل:  python main.py
 """
 
+import html
 import os
 import sys
+import threading
 import traceback
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
@@ -24,8 +26,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from core import __version__
-from structure import Options, convert, diagnose
+from .common import out_path_for, stats_summary, verdict_of
+from .core import __version__
+from .structure import ConversionCancelled, Options, convert, diagnose
 
 APP_NAME = "PDF2MD"
 TAGLINE = "استخراج نص عربي سليم من PDF المعطوب الرباطات، وتحويله إلى Markdown منظَّم"
@@ -125,10 +128,12 @@ class ConvertWorker(QThread):
     logline = pyqtSignal(str)
     done = pyqtSignal(str, dict, str)      # md, stats, out_path
     failed = pyqtSignal(str)
+    cancelled = pyqtSignal()
 
-    def __init__(self, pdf, opt, out_path):
+    def __init__(self, pdf, opt, out_path, cancel):
         super().__init__()
         self.pdf, self.opt, self.out_path = pdf, opt, out_path
+        self.cancel = cancel
 
     def run(self):
         try:
@@ -136,6 +141,7 @@ class ConvertWorker(QThread):
                 self.pdf, self.opt,
                 progress=lambda p, m: self.progress.emit(p, m),
                 log=lambda m: self.logline.emit(m),
+                cancel=self.cancel,
             )
             if self.out_path:
                 os.makedirs(os.path.dirname(os.path.abspath(self.out_path)),
@@ -143,6 +149,8 @@ class ConvertWorker(QThread):
                 with open(self.out_path, "w", encoding="utf-8") as f:
                     f.write(md)
             self.done.emit(md, st, self.out_path or "")
+        except ConversionCancelled:
+            self.cancelled.emit()
         except Exception:
             self.failed.emit(traceback.format_exc())
 
@@ -178,9 +186,12 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.queue = []
         self.results = []
+        self.failures = []
         # الخيوط تبقى مرجَّعة حتى تنتهي فعلًا. لو استُبدل المرجع بخيط جديد
         # قبل أن ينتهي القديم، أُتلف كائن QThread وهو يعمل — وهذا انهيار.
         self._workers = []
+        self._cancel = threading.Event()
+        self._current = ""
         self._build()
 
     # ---------- البناء ----------
@@ -229,13 +240,22 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         self.btn_diag = QPushButton("فحص تشخيصي")
         self.btn_diag.setObjectName("gold")
-        self.btn_diag.setToolTip("يفحص عيّنة من الملف ويعرض جدول قبل/بعد")
+        self.btn_diag.setToolTip("يفحص عيّنة من الملف ويعرض جدول قبل/بعد (Ctrl+D)")
+        self.btn_diag.setShortcut("Ctrl+D")
         self.btn_diag.clicked.connect(self.run_diag)
         self.btn_go = QPushButton("تحويل")
-        self.btn_go.setToolTip("يحوّل كل الملفات في القائمة واحدًا تلو الآخر")
+        self.btn_go.setToolTip("يحوّل كل الملفات في القائمة واحدًا تلو الآخر (Ctrl+Return)")
+        self.btn_go.setShortcut("Ctrl+Return")
         self.btn_go.clicked.connect(self.run_convert)
+        self.btn_stop = QPushButton("إيقاف")
+        self.btn_stop.setObjectName("ghost")
+        self.btn_stop.setToolTip("يوقف التحويل الجاري بأمان (Esc)")
+        self.btn_stop.setShortcut("Esc")
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.clicked.connect(self.stop_convert)
         row.addWidget(self.btn_diag)
         row.addWidget(self.btn_go, 1)
+        row.addWidget(self.btn_stop)
         v.addLayout(row)
         v.addStretch()
 
@@ -256,6 +276,8 @@ class MainWindow(QMainWindow):
 
         row = QHBoxLayout()
         b_add = QPushButton("إضافة ملفات")
+        b_add.setToolTip("اختيار ملفات PDF (Ctrl+O)")
+        b_add.setShortcut("Ctrl+O")
         b_add.clicked.connect(self.pick_files)
         b_del = QPushButton("حذف المحدد")
         b_del.setObjectName("ghost")
@@ -491,9 +513,10 @@ class MainWindow(QMainWindow):
             self._workers.remove(worker)
         worker.deleteLater()
 
-    def busy(self, on):
+    def busy(self, on, stoppable=False):
         self.btn_go.setEnabled(not on)
         self.btn_diag.setEnabled(not on)
+        self.btn_stop.setEnabled(on and stoppable)
 
     def say(self, msg):
         self.log.appendPlainText(msg)
@@ -506,11 +529,45 @@ class MainWindow(QMainWindow):
         self.say_status(msg)
 
     def on_fail(self, tb):
+        """فشل فحص تشخيصي — لا طابور هنا، يكفي التنبيه."""
         self.busy(False)
-        self.queue = []
         self.say(tb)
         self.tabs.setCurrentIndex(2)
         QMessageBox.critical(self, "خطأ", "فشل التنفيذ — راجع تبويب السجل.")
+
+    def on_convert_fail(self, tb):
+        """فشل ملف واحد في الدفعة: يُسجَّل ويُتخطّى وتكمل بقية الملفات."""
+        name = os.path.basename(self._current)
+        self.failures.append(name)
+        self.say(f"✗ فشل تحويل {name}:\n{tb}")
+        self.say_status(f"فشل {name} — متابعة بقية الملفات")
+        self.next_job()
+
+    def on_cancelled(self):
+        self.queue = []
+        self.busy(False)
+        self.say("— أُوقف التحويل بطلب المستخدم.")
+        self.say_status("أُوقف التحويل")
+
+    def stop_convert(self):
+        self._cancel.set()
+        self.btn_stop.setEnabled(False)
+        self.say_status("جارٍ الإيقاف…")
+
+    def closeEvent(self, e):
+        """لا نُتلف QThread وهو يعمل — نسأل، نلغي، وننتظر الخيوط."""
+        if self._workers:
+            r = QMessageBox.question(
+                self, "خروج",
+                "ثمّة عملية جارية — إيقافها والخروج؟",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if r != QMessageBox.StandardButton.Yes:
+                e.ignore()
+                return
+            self._cancel.set()
+            for w in list(self._workers):
+                w.wait(10000)
+        e.accept()
 
     # ---------- التشخيص ----------
 
@@ -530,38 +587,37 @@ class MainWindow(QMainWindow):
 
     def show_diag(self, d):
         self.busy(False)
-        before_bad = sum(r["before_bad"] for r in d["rows"])
-        after_bad = sum(r["after_bad"] for r in d["rows"])
 
         if not d["has_text"]:
             verdict = ("الملف مصوّر بلا طبقة نص — يحتاج OCR قبل التحويل."
                        if d["needs_ocr"] else "لا توجد طبقة نص في هذا الملف.")
             color = BAD
-        elif before_bad == 0:
-            verdict, color = "الملف سليم — لا حاجة لإصلاح الرباطات.", OK
-        elif after_bad == 0:
-            verdict = f"رُصد تلف في الرباطات وأُصلح بالكامل ({before_bad} حالة في العيّنة)."
-            color = OK
         else:
-            verdict = f"أُصلح أغلب التلف، وبقي {after_bad} حالة تحتاج فحصًا يدويًا."
-            color = BAD
+            verdict, ok = verdict_of(d["rows"])
+            color = OK if ok else BAD
 
-        pairs = "، ".join(f"{k}×{v}" for k, v in d["pairs"]) or "—"
+        # بيانات PDF الوصفية والأزواج نص خارجي غير موثوق داخل RichText
+        pairs = html.escape(
+            "، ".join(f"{k}×{v}" for k, v in d["pairs"]) or "—")
         self.diag_info.setText(
             f"<b>الصفحات:</b> {d['pages']} &nbsp;|&nbsp; "
             f"<b>العيّنة:</b> {d['sampled']} صفحة &nbsp;|&nbsp; "
             f"<b>الخطوط:</b> {d['fonts']} &nbsp;|&nbsp; "
             f"<b>طبقة نص:</b> {'نعم' if d['has_text'] else 'لا — يحتاج OCR'}<br>"
-            f"<b>المنتج:</b> {d['producer'] or '—'} &nbsp;|&nbsp; "
-            f"<b>المُنشئ:</b> {d['creator'] or '—'}<br>"
+            f"<b>المنتج:</b> {html.escape(d['producer'] or '—')} &nbsp;|&nbsp; "
+            f"<b>المُنشئ:</b> {html.escape(d['creator'] or '—')}<br>"
             f"<b>رباطات مُصلَحة في العيّنة:</b> {d['ligatures']:,} ({pairs})<br>"
             f"<b style='color:{color}'>{verdict}</b>"
         )
 
         self.tbl.setRowCount(len(d["rows"]))
         for i, r in enumerate(d["rows"]):
-            values = [r["word"], r["before_ok"], r["before_bad"],
-                      r["after_ok"], r["after_bad"]]
+            # عمودا النتيجة يحملان رمزًا مع اللون — لا نعتمد على اللون وحده
+            values = [r["word"], r["before_ok"],
+                      f"✗ {r['before_bad']}" if r["before_bad"] else r["before_bad"],
+                      r["after_ok"],
+                      f"✓ {r['after_bad']}" if not r["after_bad"]
+                      else f"✗ {r['after_bad']}"]
             for j, v in enumerate(values):
                 item = QTableWidgetItem(str(v))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -578,14 +634,37 @@ class MainWindow(QMainWindow):
 
     # ---------- التحويل ----------
 
+    def out_for(self, pdf):
+        return out_path_for(pdf, self.ed_out.text().strip() or None, True)
+
     def run_convert(self):
         count = self.files.count()
         if not count:
             QMessageBox.information(self, "تنبيه", "أضف ملف PDF أولًا.")
             return
+        # CLI يرفض النطاق المقلوب — الواجهة كذلك، بدل تجاهله بصمت
+        pf, pt = self.sp_from.value(), self.sp_to.value()
+        if pf and pt and pt < pf:
+            QMessageBox.warning(self, "نطاق الصفحات",
+                                f"نهاية النطاق ({pt}) أصغر من بدايته ({pf}).")
+            return
+        # الكتابة فوق ملفات موجودة تحتاج موافقة صريحة — مرة واحدة للدفعة
+        existing = [o for o in map(self.out_for, self.all_files())
+                    if os.path.exists(o)]
+        if existing:
+            r = QMessageBox.question(
+                self, "ملفات موجودة",
+                f"{len(existing)} ملف مخرَج موجود مسبقًا وسيُكتب فوقه:\n"
+                + "\n".join(os.path.basename(o) for o in existing[:8])
+                + ("\n…" if len(existing) > 8 else "") + "\n\nمتابعة؟",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if r != QMessageBox.StandardButton.Yes:
+                return
         self.queue = self.all_files()
         self.results = []
-        self.busy(True)
+        self.failures = []
+        self._cancel = threading.Event()
+        self.busy(True, stoppable=True)
         self.tabs.setCurrentIndex(0)
         self.say(f"\n═══ بدء تحويل {count} ملف")
         self.next_job()
@@ -594,28 +673,33 @@ class MainWindow(QMainWindow):
         if not self.queue:
             self.busy(False)
             self.say_status("اكتمل التحويل")
-            if self.results:
-                QMessageBox.information(
-                    self, "تم", "تم إنشاء الملفات:\n" + "\n".join(self.results))
+            if self.results or self.failures:
+                msg = ""
+                if self.results:
+                    msg += "تم إنشاء الملفات:\n" + "\n".join(self.results)
+                if self.failures:
+                    msg += (("\n\n" if msg else "")
+                            + f"فشل {len(self.failures)} ملف (راجع السجل):\n"
+                            + "\n".join(self.failures))
+                (QMessageBox.warning if self.failures
+                 else QMessageBox.information)(self, "تم", msg)
             return
 
         pdf = self.queue.pop(0)
-        out_dir = self.ed_out.text().strip() or os.path.dirname(os.path.abspath(pdf))
-        out = os.path.join(
-            out_dir, os.path.splitext(os.path.basename(pdf))[0] + ".md")
+        self._current = pdf
+        out = self.out_for(pdf)
         self.say(f"\n— تحويل: {os.path.basename(pdf)}")
-        worker = ConvertWorker(pdf, self.options(), out)
+        worker = ConvertWorker(pdf, self.options(), out, self._cancel)
         worker.progress.connect(self.on_progress)
         worker.logline.connect(self.say)
         worker.done.connect(self.on_done)
-        worker.failed.connect(self.on_fail)
+        worker.failed.connect(self.on_convert_fail)
+        worker.cancelled.connect(self.on_cancelled)
         self.start_worker(worker)
 
     def on_done(self, md, st, out):
         self.preview.setPlainText(md[:200000])
-        self.say(f"  الصفحات {st['pages']} | رباطات {st['lig']:,} | "
-                 f"عناوين {st['headings']} | حواشي {st['notes']} | "
-                 f"فهارس متخطّاة {st['toc_skipped']}")
+        self.say(f"  الصفحات {st['pages']} | {stats_summary(st)}")
         self.say(f"  حُفظ في: {out}")
         self.results.append(out)
         self.next_job()

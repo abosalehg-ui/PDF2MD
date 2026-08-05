@@ -19,7 +19,11 @@ from dataclasses import dataclass
 
 import fitz
 
-import core
+from . import core
+
+
+class ConversionCancelled(Exception):
+    """أُلغي التحويل بطلب من المستخدم — ليست حالة خطأ."""
 
 
 # ═══════════════════════ الإعدادات ═══════════════════════
@@ -167,14 +171,16 @@ def body_font_size(pages):
 
 def repeated_headers(pages, total):
     """
-    الترويسة والتذييل تُرصد بتكرارها عبر الصفحات لا بموضعها وحده:
-    السطر الذي يتكرر (بعد تجريد الأرقام) في ٥٪ من الصفحات على الأقل.
+    الترويسة والتذييل تُرصدان بتكرارهما عبر الصفحات لا بموضعهما وحده:
+    السطر الواقع في منطقة الترويسة أو التذييل ويتكرر (بعد تجريد
+    الأرقام) في ٥٪ من الصفحات على الأقل.
     """
     counter = Counter()
     for _, lines, height in pages:
         counter.update({
             re.sub(r"\d+", "#", l["text"]) for l in lines
-            if l["y0"] / height < HEADER_ZONE and len(l["text"]) > 4
+            if (l["y0"] / height < HEADER_ZONE
+                or l["y0"] / height > FOOTER_ZONE) and len(l["text"]) > 4
         })
     return {k for k, v in counter.items() if v >= max(3, 0.05 * total)}
 
@@ -186,12 +192,14 @@ def anchor_of(text):
 
 # ═══════════════════════ التحويل ═══════════════════════
 
-def convert(pdf_path, opt=None, progress=None, log=None):
+def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
     """
     يحوّل ملف PDF كاملًا إلى Markdown.
 
     يرجّع (markdown, stats).
     progress(pct:int, msg:str) و log(msg:str) اختياريتان.
+    cancel كائن اختياري له is_set() (مثل threading.Event) — عند ضبطه
+    يتوقف التحويل ويُرفع ConversionCancelled.
     """
     opt = opt or Options()
     say = log or (lambda m: None)
@@ -199,6 +207,8 @@ def convert(pdf_path, opt=None, progress=None, log=None):
 
     doc = fitz.open(pdf_path)
     try:
+        if doc.needs_pass:
+            raise ValueError("الملف محمي بكلمة مرور — أزل الحماية أولًا.")
         n = len(doc)
         lo = max(0, (opt.page_from or 1) - 1)
         hi = min(n - 1, (opt.page_to or n) - 1)
@@ -211,6 +221,8 @@ def convert(pdf_path, opt=None, progress=None, log=None):
         # ── ١) الاستخراج ──
         pages = []
         for k, i in enumerate(range(lo, hi + 1)):
+            if cancel is not None and cancel.is_set():
+                raise ConversionCancelled("أُلغي التحويل.")
             page = doc[i]
             lines = core.page_lines(page, st,
                                     unify_digits=opt.unify_digits,
@@ -236,6 +248,8 @@ def convert(pdf_path, opt=None, progress=None, log=None):
         in_laiha = False
 
         for k, (i, lines, height) in enumerate(pages):
+            if cancel is not None and cancel.is_set():
+                raise ConversionCancelled("أُلغي التحويل.")
             if opt.drop_toc and is_toc_page(lines, body_size):
                 st["toc_skipped"] += 1
                 continue
@@ -245,9 +259,13 @@ def convert(pdf_path, opt=None, progress=None, log=None):
 
             for l in lines:
                 t, rel = l["text"], l["y0"] / height
-                if opt.drop_headers and rel < HEADER_ZONE and (
-                        re.sub(r"\d+", "#", t) in boiler
-                        or l["size"] < body_size - 2):
+                # الترويسة: المتكررة أو أي سطر صغير في منطقتها.
+                # التذييل: المتكرر (بعد تجريد الأرقام) — الحاشية نص فريد فلا تُمس.
+                if opt.drop_headers and (
+                        (rel < HEADER_ZONE and (re.sub(r"\d+", "#", t) in boiler
+                                                or l["size"] < body_size - 2))
+                        or (rel > FOOTER_ZONE
+                            and re.sub(r"\d+", "#", t) in boiler)):
                     continue
                 if rel > FOOTER_ZONE and RE_PAGENO.match(t):
                     continue
@@ -356,6 +374,8 @@ def diagnose(pdf_path, sample_every=7, progress=None):
     """
     doc = fitz.open(pdf_path)
     try:
+        if doc.needs_pass:
+            raise ValueError("الملف محمي بكلمة مرور — أزل الحماية أولًا.")
         idx = list(range(0, len(doc), max(1, sample_every)))
         tick = progress or (lambda p, m: None)
 
