@@ -7,20 +7,19 @@ PDF2MD — نقطة الدخول الوحيدة.
     python main.py ملف.pdf -o مخرج.md    ← يشتغل من سطر الأوامر
     python main.py --help                ← قائمة خيارات سطر الأوامر
 
-هذا الملف يضيف مجلد src إلى sys.path، فتصبح استيرادات الوحدات داخله
-مطلقة وبسيطة (import core) بلا حاجة إلى تشغيل المشروع كحزمة.
+src حزمة بايثون عادية (فيها __init__.py) واستيراداتها الداخلية نسبية.
+نضمن فقط أن جذر المشروع على sys.path عند التشغيل من مجلد آخر.
 """
 
 import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(HERE, "src")
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 
-if not os.path.isdir(SRC):
-    sys.exit(f"مجلد src غير موجود بجانب main.py:\n  {SRC}")
-if SRC not in sys.path:
-    sys.path.insert(0, SRC)
+if not os.path.isdir(os.path.join(HERE, "src")):
+    sys.exit(f"مجلد src غير موجود بجانب main.py:\n  {os.path.join(HERE, 'src')}")
 
 
 # ── التحقق من المتطلبات قبل أي استيراد ثقيل ──
@@ -57,14 +56,14 @@ def main():
         bail(lacking)
 
     if args:
-        import cli
+        from src import cli
         return cli.main(args)
 
     lacking = missing(GUI_DEPS)
     if lacking:
         bail(lacking)
 
-    import gui
+    from src import gui
     return gui.run()
 
 

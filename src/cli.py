@@ -14,8 +14,9 @@ import os
 import re
 import sys
 
-from structure import Options, convert, diagnose
-from core import __version__
+from .common import out_path_for, stats_summary, verdict_of
+from .core import __version__
+from .structure import Options, convert, diagnose
 
 
 def build_parser():
@@ -51,6 +52,8 @@ def build_parser():
                    help="إبقاء صفحات الفهرس الأصلية")
     p.add_argument("--no-toc", action="store_true",
                    help="عدم توليد فهرس بروابط")
+    p.add_argument("-f", "--force", action="store_true",
+                   help="الكتابة فوق ملف مخرَج موجود مسبقًا")
     p.add_argument("--diag", action="store_true",
                    help="فحص تشخيصي فقط بلا تحويل")
     p.add_argument("-q", "--quiet", action="store_true", help="بلا رسائل تفصيلية")
@@ -84,15 +87,6 @@ def options_from(args):
     return opt
 
 
-def out_path_for(pdf, out, many):
-    """يحدّد مسار المخرَج: ملف واحد صريح، أو مجلد، أو بجانب ملف PDF."""
-    if out and not many and not os.path.isdir(out) and not out.endswith(os.sep):
-        return out
-    folder = out if out else (os.path.dirname(os.path.abspath(pdf)))
-    os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, os.path.splitext(os.path.basename(pdf))[0] + ".md")
-
-
 def print_diag(pdf, d):
     print(f"\n── {os.path.basename(pdf)}")
     print(f"   الصفحات: {d['pages']}  |  العيّنة: {d['sampled']}  |  "
@@ -108,14 +102,8 @@ def print_diag(pdf, d):
     for r in d["rows"]:
         print(f"   {r['word']:<12}{r['before_ok']:>8}{r['before_bad']:>8}"
               f"{r['after_ok']:>8}{r['after_bad']:>8}")
-    before_bad = sum(r["before_bad"] for r in d["rows"])
-    after_bad = sum(r["after_bad"] for r in d["rows"])
-    if before_bad == 0:
-        print("\n   ✓ الملف سليم — لا حاجة لإصلاح الرباطات.")
-    elif after_bad == 0:
-        print(f"\n   ✓ رُصد تلف في الرباطات وأُصلح بالكامل ({before_bad} حالة في العيّنة).")
-    else:
-        print(f"\n   ! أُصلح أغلب التلف، وبقي {after_bad} حالة تحتاج فحصًا يدويًا.")
+    verdict, ok = verdict_of(d["rows"])
+    print(f"\n   {'✓' if ok else '!'} {verdict}")
 
 
 def main(argv=None):
@@ -125,21 +113,40 @@ def main(argv=None):
     if missing:
         sys.exit("ملفات غير موجودة:\n  " + "\n  ".join(missing))
 
+    # فشل ملف واحد لا يسقط الدفعة: يُسجَّل ويُتخطّى، ويظهر أثره في exit code.
+    failed = []
+
     if args.diag:
         for pdf in args.pdf:
-            print_diag(pdf, diagnose(pdf))
-        return 0
+            try:
+                print_diag(pdf, diagnose(pdf))
+            except Exception as e:
+                print(f"✗ فشل فحص {os.path.basename(pdf)}: {e}", file=sys.stderr)
+                failed.append(pdf)
+        return 1 if failed else 0
 
     opt = options_from(args)
     say = (lambda m: None) if args.quiet else (lambda m: print("  " + m))
+    many = len(args.pdf) > 1
 
     for pdf in args.pdf:
         if not args.quiet:
             print(f"\n── {os.path.basename(pdf)}")
-        md, st = convert(pdf, opt, log=say)
-        out = out_path_for(pdf, args.out, len(args.pdf) > 1)
+        out = out_path_for(pdf, args.out, many)
+        if os.path.exists(out) and not args.force:
+            print(f"⚠ تخطٍّ: {out} موجود مسبقًا — استخدم --force للكتابة فوقه.")
+            continue
+        try:
+            md, st = convert(pdf, opt, log=say)
+        except Exception as e:
+            print(f"✗ فشل تحويل {os.path.basename(pdf)}: {e}", file=sys.stderr)
+            failed.append(pdf)
+            continue
         with open(out, "w", encoding="utf-8") as f:
             f.write(md)
-        print(f"✓ {out}  ({st['chars']:,} حرف، {st['lig']:,} رباط، "
-              f"{st['headings']} عنوانًا)")
-    return 0
+        print(f"✓ {out}  ({st['chars']:,} حرف — {stats_summary(st)})")
+
+    if failed:
+        print(f"\nاكتملت الدفعة مع فشل {len(failed)} من {len(args.pdf)} ملف.",
+              file=sys.stderr)
+    return 1 if failed else 0
