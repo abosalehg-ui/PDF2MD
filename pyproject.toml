@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf2md"
+version = "2.0.0"
+description = "استخراج نص عربي سليم من PDF المعطوب الرباطات وتحويله إلى Markdown"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Abdulkarim" }]
+keywords = ["pdf", "markdown", "arabic", "ligatures", "rtl"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Arabic",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
+
+# PyQt6 اختياري: سطر الأوامر يعمل بدونه — انظر requirements.txt
+dependencies = [
+    "PyMuPDF>=1.26,<2",
+    "numpy>=1.24,<3",
+]
+
+[project.optional-dependencies]
+gui = ["PyQt6>=6.6,<7"]
+dev = ["pytest>=7", "ruff>=0.5"]
+
+[project.urls]
+Homepage = "https://github.com/abosalehg-ui/PDF2MD"
+
+[project.scripts]
+pdf2md = "src.cli:main"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 90
+target-version = "py39"
+
+[tool.ruff.lint]
+# E741 يمنع أسماء مثل l التي تلتبس بالرقم ١، وE501 يحرس طول السطر
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E402",   # main.py يفحص المتطلبات قبل الاستيرادات الثقيلة عمدًا
+    "UP009",  # ترويسة الترميز اصطلاح متّبع في كل ملفات المشروع
+    "B008",
+]
+
+[tool.ruff.lint.isort]
+# استيراد PyMuPDF يمرّ بمحاولة/سقوط، فلا يُفرز مع الكتلة التي تليه
+known-third-party = ["fitz", "pymupdf", "numpy", "PyQt6", "pytest"]
+
+[tool.ruff.lint.per-file-ignores]
+# الاختبارات تستورد fitz بمحاولة/سقوط، وتبني كائنات وهمية
+"tests/*" = ["E402", "F401"]

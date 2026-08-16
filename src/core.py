@@ -21,7 +21,14 @@ core.py — محرّك الاستخراج في PDF2MD.
 import re
 import unicodedata
 
-import fitz
+# الاسم `fitz` مهجور معلَن بالإزالة داخل خط 1.x من PyMuPDF، والحدّ `<2` في
+# requirements.txt لا يحمي منه. نستورد الاسم الجديد أولًا ونسقط للقديم على
+# الإصدارات الأقدم من 1.24.3 التي لا تعرفه بعد.
+try:
+    import pymupdf as fitz
+except ImportError:                     # PyMuPDF < 1.24.3
+    import fitz
+
 import numpy as np
 
 __version__ = "2.0.0"
@@ -367,6 +374,55 @@ def _is_numeric(u):
     return (not u.is_mark) and (LTR_STRONG.match(u.t[0]) or u.t in NUM_SEP)
 
 
+def _join_units(units, rtl, ink, z, band_y0, band_y1):
+    """
+    يجمع وحدات مرتّبة بترتيب القراءة في نص واحد.
+
+    المسافات من المجرى (علامات الحدّ) ومن الفجوات كلتاهما تمرّان على فحص
+    الحبر، وإلا أعادت قاعدة الفجوة إدراج المسافة الوهمية بعد أن حذفها الفحص.
+
+    الفجوة تُقاس من «الجبهة» — أبعد حافة بلغها السطر بصريًا — لا من إحداثيات
+    الوحدة السابقة في ترتيب القراءة. الفرق يظهر بعد عكس تسلسل رقمي: آخر وحدة
+    في القراءة تقع عند الطرف المقابل من العدد، فتُحسب فجوة وهمية بعرض العدد
+    كله (3/1 - بدل 3/1-).
+    """
+    parts, prev, pending, front = [], None, False, None
+    for u in units:
+        if u.is_mark:
+            pending = True
+            continue
+        if prev is not None and not pending and not u.glue:
+            gap = (front - u.x1) if rtl else (u.x0 - front)
+            if gap > GAP_RATIO * max(prev.size, u.size):
+                pending = True
+        if pending and parts and prev is not None:
+            if not _inked(prev, u, ink, z, band_y0, band_y1):
+                parts.append(" ")
+        parts.append(u.t)
+        edge = u.x0 if rtl else u.x1
+        front = edge if front is None else (min(front, edge) if rtl
+                                            else max(front, edge))
+        prev, pending = u, False
+    return tidy("".join(parts))
+
+
+def _split_cells(units, seg_boxes, rtl, ink, z, band_y0, band_y1):
+    """
+    يقسّم وحدات صف جدول إلى خلايا نصية، خلية لكل جزء من أجزاء rawdict.
+
+    الأجزاء تُرتَّب باتجاه القراءة (تنازليًا حسب الحافة اليمنى في RTL)، وكل
+    وحدة تُنسب للصندوق الذي يحتوي مركزها. الترتيب داخل الخلية محفوظ لأن
+    `units` وصلت مرتّبة أصلًا، والترشيح لا يغيّر ترتيبها.
+    """
+    ordered = sorted(seg_boxes, key=(lambda b: -b[1]) if rtl else (lambda b: b[0]))
+    cells = []
+    for bx0, bx1 in ordered:
+        part = [u for u in units if bx0 - 0.5 <= (u.x0 + u.x1) / 2 <= bx1 + 0.5]
+        text = _join_units(part, rtl, ink, z, band_y0, band_y1) if part else ""
+        cells.append(text)
+    return cells
+
+
 def build_lines(units, ink=None, z=1.0):
     """يحوّل وحدات الصفحة إلى أسطر نصية مرتّبة بصريًا."""
     if not units:
@@ -406,33 +462,12 @@ def build_lines(units, ink=None, z=1.0):
         if rtl:
             group = reverse_ltr_runs(group)
 
-        # تجميع النص: المسافات من المجرى ومن الفجوات معًا، ثم فحص الحبر.
-        # لا بد أن يمرّ الاثنان على الفحص، وإلا أعادت قاعدة الفجوة إدراج
-        # المسافة الوهمية بعد أن حذفها الفحص.
-        # الفجوة تُقاس من «الجبهة» — أبعد حافة بلغها السطر بصريًا — لا من
-        # إحداثيات الوحدة السابقة في ترتيب القراءة. الفرق يظهر بعد عكس
-        # تسلسل رقمي: آخر وحدة في القراءة تقع عند الطرف المقابل من العدد،
-        # فتُحسب فجوة وهمية بعرض العدد كله (3/1 - بدل 3/1-).
-        parts, prev, pending, front = [], None, False, None
-        for u in group:
-            if u.is_mark:
-                pending = True
-                continue
-            if prev is not None and not pending and not u.glue:
-                gap = (front - u.x1) if rtl else (u.x0 - front)
-                if gap > GAP_RATIO * max(prev.size, u.size):
-                    pending = True
-            if pending and parts and prev is not None:
-                if not _inked(prev, u, ink, z, band_y0, band_y1):
-                    parts.append(" ")
-            parts.append(u.t)
-            edge = u.x0 if rtl else u.x1
-            front = edge if front is None else (min(front, edge) if rtl
-                                                else max(front, edge))
-            prev, pending = u, False
-
-        text = tidy("".join(parts))
+        text = _join_units(group, rtl, ink, z, band_y0, band_y1)
         if text:
+            # خلايا الصف تُستخرَج فقط لصفوف الجداول، وتُستهلَك في
+            # structure.py لبناء جدول Markdown حقيقي.
+            cells = (_split_cells(group, seg_boxes, rtl, ink, z, band_y0, band_y1)
+                     if is_row else [])
             lines.append({
                 "text": text,
                 "x0": min(u.x0 for u in real), "x1": max(u.x1 for u in real),
@@ -440,6 +475,7 @@ def build_lines(units, ink=None, z=1.0):
                 "size": max(u.size for u in real),
                 "bold": any(u.bold for u in real),
                 "row": is_row,
+                "cells": cells,
             })
     return lines
 

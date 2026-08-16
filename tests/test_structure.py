@@ -6,12 +6,24 @@
 
 import threading
 
-import fitz
 import pytest
 
-from src import common
-from src.structure import ConversionCancelled, Options, convert, diagnose
+try:
+    import pymupdf as fitz
+except ImportError:                     # PyMuPDF < 1.24.3
+    import fitz
 
+from src import common
+from src.structure import (
+    ConversionCancelled,
+    Options,
+    anchor_of,
+    body_font_size,
+    boiler_key,
+    convert,
+    diagnose,
+    heading_shaped,
+)
 
 # ═══════════ توليد ملفات الاختبار ═══════════
 
@@ -43,9 +55,26 @@ def test_convert_headings_and_paragraphs(tmp_path):
     assert st["headings"] == 1
 
 
-def test_convert_reversed_page_range_falls_back_to_all(tmp_path):
+def test_reversed_page_range_warns_and_runs_to_end(tmp_path):
+    """النطاق المقلوب يُقصّ إلى نهاية الملف — بتحذير صريح لا بصمت."""
+    pdf = make_pdf(tmp_path / "doc.pdf", [BODY, BODY, BODY])
+    said = []
+    md, st = convert(pdf, Options(check_ink=False, page_from=2, page_to=1),
+                     log=said.append)
+    assert st["pages"] == 2                       # من الصفحة ٢ إلى النهاية
+    assert any("أصغر من بدايته" in m for m in said)
+
+
+def test_page_from_beyond_document_rejected(tmp_path):
+    """طلب صفحات خارج المدى كان يسقط بصمت إلى «الملف كله»."""
     pdf = make_pdf(tmp_path / "doc.pdf", [BODY, BODY])
-    md, st = convert(pdf, Options(check_ink=False, page_from=2, page_to=1))
+    with pytest.raises(ValueError, match="تتجاوز عدد صفحات"):
+        convert(pdf, Options(check_ink=False, page_from=500, page_to=600))
+
+
+def test_valid_page_range_honoured(tmp_path):
+    pdf = make_pdf(tmp_path / "doc.pdf", [BODY, BODY, BODY, BODY])
+    _, st = convert(pdf, Options(check_ink=False, page_from=2, page_to=3))
     assert st["pages"] == 2
 
 
@@ -103,6 +132,93 @@ def test_diagnose_clean_file(tmp_path):
     assert all(r["after_bad"] == 0 for r in d["rows"])
 
 
+# ═══════════ مراسي الفهرس ═══════════
+
+def test_anchor_is_lowercased():
+    """مصيّرات Markdown تصغّر المراسي — «#Chapter-One» رابط ميت."""
+    assert anchor_of("Chapter One") == "chapter-one"
+    assert anchor_of("الفصل الأول:") == "الفصل-الأول"
+
+
+def test_anchor_resolves_collisions():
+    seen = {}
+    assert anchor_of("الفصل الأول", seen) == "الفصل-الأول"
+    assert anchor_of("الفصل الأول", seen) == "الفصل-الأول-1"
+    assert anchor_of("الفصل الأول", seen) == "الفصل-الأول-2"
+    assert anchor_of("الباب الثاني", seen) == "الباب-الثاني"
+
+
+def test_toc_links_unique_for_repeated_headings(tmp_path):
+    pdf = make_pdf(tmp_path / "doc.pdf",
+                   [[("Chapter One", 100, 20)] + BODY for _ in range(2)])
+    md, _ = convert(pdf, Options(check_ink=False, drop_headers=False))
+    links = [ln for ln in md.splitlines() if ln.startswith("- [")]
+    assert links == ["- [Chapter One](#chapter-one)",
+                     "- [Chapter One](#chapter-one-1)"]
+
+
+# ═══════════ حجم خط المتن ═══════════
+
+def _page(lines):
+    return (0, [{"text": t, "size": s, "y0": 0, "y1": s} for t, s in lines], 842)
+
+
+def test_long_footnotes_do_not_steal_body_size():
+    """
+    ثلاثة أسطر حاشية طويلة مقابل عشرة أسطر متن: بلا سقف على مساهمة السطر
+    يغلب مجموعُ حروف الحاشية المتنَ، لأن الوزن يقيس الحروف لا الأسطر.
+    """
+    pages = [_page([("سطر متن بطول معقول في هذه الصفحة هنا.", 11.0)] * 10
+                   + [("حاشية مطوّلة جدًّا " * 20, 8.0)] * 3)]
+    assert body_font_size(pages) == 11.0
+
+
+def test_body_size_picks_dominant_when_uniform():
+    pages = [_page([("سطر متن عادي.", 11.0) for _ in range(20)]
+                   + [("عنوان", 20.0)])]
+    assert body_font_size(pages) == 11.0
+
+
+def test_body_size_empty_document():
+    assert body_font_size([]) == 12.0
+
+
+# ═══════════ شكل العنوان ═══════════
+
+def test_sentence_is_never_a_heading():
+    """الجملة المنتهية بنقطة ليست عنوانًا مهما كبر خطها."""
+    assert not heading_shaped("نص المتن ينتهي بنقطة.")
+    assert not heading_shaped("Main body paragraph one here.")
+    assert not heading_shaped("عبارة تنتهي بفاصلة،")
+    assert heading_shaped("الباب الأول")
+    assert heading_shaped("المادة الأولى:")          # النقطتان مسموحتان
+    assert not heading_shaped("ف" * 200)             # أطول من أن يكون عنوانًا
+
+
+def test_dense_small_text_does_not_promote_body_to_headings(tmp_path):
+    """
+    الانقلاب المرصود: صفحة فيها سطرا متن 12pt وسبعة صفوف 9pt كانت تُخرج
+    المتن عناوين (### …) والجدولَ متنًا.
+    """
+    body = [("Main body paragraph one here.", 150, 12),
+            ("Main body paragraph two here.", 170, 12)]
+    rows = [(f"Row {k}  |  Value {k}  |  Note {k}", 500 + k * 16, 9)
+            for k in range(7)]
+    pdf = make_pdf(tmp_path / "doc.pdf", [body + rows])
+    md, _ = convert(pdf, Options(check_ink=False, drop_headers=False))
+    assert "Main body paragraph one here." in md
+    assert "### Main body paragraph one here." not in md
+    assert "## Main body paragraph one here." not in md
+
+
+# ═══════════ مفتاح الترويسة ═══════════
+
+def test_boiler_key_strips_both_digit_sets():
+    assert boiler_key("صفحة 12") == boiler_key("صفحة 45")
+    assert boiler_key("صفحة ٣٤") == boiler_key("صفحة ٧")
+    assert boiler_key("نظام العمل") != boiler_key("اللائحة التنفيذية")
+
+
 # ═══════════ common.py ═══════════
 
 def test_verdict_of():
@@ -125,3 +241,16 @@ def test_out_path_for(tmp_path):
     assert got.endswith("كتاب.md") and got.startswith(folder)
     beside = common.out_path_for(pdf, None, many=False)
     assert beside == str(tmp_path / "كتاب.md")
+
+
+def test_out_path_for_has_no_side_effects(tmp_path):
+    """كانت تنشئ المجلد بمجرد حساب المسار، قبل موافقة المستخدم."""
+    folder = tmp_path / "لم-يُنشأ-بعد"
+    common.out_path_for(str(tmp_path / "كتاب.pdf"), str(folder), many=True)
+    assert not folder.exists()
+
+
+def test_ensure_parent_creates_folder(tmp_path):
+    target = tmp_path / "عميق" / "أعمق" / "ملف.md"
+    common.ensure_parent(str(target))
+    assert target.parent.is_dir()

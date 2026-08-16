@@ -24,18 +24,49 @@ if not os.path.isdir(os.path.join(HERE, "src")):
 
 # ── التحقق من المتطلبات قبل أي استيراد ثقيل ──
 
-CORE_DEPS = [("fitz", "PyMuPDF"), ("numpy", "numpy")]
-GUI_DEPS = [("PyQt6", "PyQt6")]
+# PyMuPDF يُستورد باسمه الجديد `pymupdf`؛ الاسم القديم `fitz` مهجور معلَن
+# بالإزالة، ولو فُحص به لأعلن «متطلبات ناقصة» بعد الإزالة والمكتبة مثبّتة سليمة.
+CORE_DEPS = [(("pymupdf", "fitz"), "PyMuPDF"), (("numpy",), "numpy")]
+GUI_DEPS = [(("PyQt6",), "PyQt6")]
+
+MIN_PYMUPDF = (1, 26)      # أرضية إصلاحات أمنية في MuPDF — انظر requirements.txt
 
 
 def missing(deps):
     out = []
-    for module, package in deps:
-        try:
-            __import__(module)
-        except ImportError:
+    for modules, package in deps:
+        for module in modules:
+            try:
+                __import__(module)
+                break
+            except ImportError:
+                continue
+        else:
             out.append(package)
     return out
+
+
+def warn_old_pymupdf():
+    """
+    تحذير لا رفض: الأداة تحلّل ملفات PDF غير موثوقة عبر مكتبة C، فالإصدار
+    القديم يعني ثغرات تحليل معروفة. `run.sh` لا يرقّي ما دام الاستيراد ينجح،
+    فالمستخدم قد يبقى على إصدار قديم إلى الأبد بلا أن يُنبَّه.
+    """
+    try:
+        import pymupdf
+    except ImportError:
+        try:
+            import fitz as pymupdf
+        except ImportError:
+            return
+    raw = getattr(pymupdf, "VersionBind", "") or ""
+    try:
+        version = tuple(int(x) for x in raw.split(".")[:2])
+    except ValueError:
+        return
+    if version and version < MIN_PYMUPDF:
+        print(f"⚠ إصدار PyMuPDF قديم ({raw}) — يُنصح بالترقية:\n"
+              f"  {sys.executable} -m pip install -U PyMuPDF\n", file=sys.stderr)
 
 
 def bail(packages):
@@ -54,6 +85,7 @@ def main():
     lacking = missing(CORE_DEPS)
     if lacking:
         bail(lacking)
+    warn_old_pymupdf()
 
     if args:
         from src import cli

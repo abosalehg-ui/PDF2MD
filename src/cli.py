@@ -14,7 +14,7 @@ import os
 import re
 import sys
 
-from .common import out_path_for, stats_summary, verdict_of
+from .common import ensure_parent, out_path_for, stats_summary, verdict_of
 from .core import __version__
 from .structure import Options, convert, diagnose
 
@@ -36,8 +36,12 @@ def build_parser():
     p.add_argument("--footnotes", default="quote",
                    choices=["quote", "inline", "drop"],
                    help="معالجة الحواشي (الافتراضي: quote)")
-    p.add_argument("--h-top", type=int, default=2, help="مستوى العناوين العليا")
-    p.add_argument("--h-sub", type=int, default=3, help="مستوى العناوين الفرعية")
+    # المستويات محدودة بما يفهمه Markdown — بلا حدّ ينتج «--h-top 400»
+    # عنوانًا بأربعمئة #
+    p.add_argument("--h-top", type=int, default=2, choices=range(1, 7),
+                   metavar="{1..6}", help="مستوى العناوين العليا")
+    p.add_argument("--h-sub", type=int, default=3, choices=range(1, 7),
+                   metavar="{1..6}", help="مستوى العناوين الفرعية")
     p.add_argument("--para-gap", type=float, default=0.75,
                    help="فجوة رأسية (× ارتفاع السطر) تبدأ فقرة")
     p.add_argument("--no-ink", action="store_true",
@@ -52,6 +56,8 @@ def build_parser():
                    help="إبقاء صفحات الفهرس الأصلية")
     p.add_argument("--no-toc", action="store_true",
                    help="عدم توليد فهرس بروابط")
+    p.add_argument("--no-tables", action="store_true",
+                   help="عدم بناء جداول Markdown — الصفوف تخرج فقرات")
     p.add_argument("-f", "--force", action="store_true",
                    help="الكتابة فوق ملف مخرَج موجود مسبقًا")
     p.add_argument("--diag", action="store_true",
@@ -72,6 +78,7 @@ def options_from(args):
         drop_toc=not args.keep_toc,
         footnotes=args.footnotes,
         build_toc=not args.no_toc,
+        tables=not args.no_tables,
         title=args.title,
         h_top=args.h_top,
         h_sub=args.h_sub,
@@ -136,14 +143,17 @@ def main(argv=None):
         if os.path.exists(out) and not args.force:
             print(f"⚠ تخطٍّ: {out} موجود مسبقًا — استخدم --force للكتابة فوقه.")
             continue
+        # الكتابة داخل الحماية نفسها: مسار غير موجود أو قرص ممتلئ أو صلاحية
+        # مرفوضة كانت تُنهي الدفعة كلها بـtraceback خام بعد إتمام التحويل.
         try:
             md, st = convert(pdf, opt, log=say)
+            ensure_parent(out)
+            with open(out, "w", encoding="utf-8") as f:
+                f.write(md)
         except Exception as e:
             print(f"✗ فشل تحويل {os.path.basename(pdf)}: {e}", file=sys.stderr)
             failed.append(pdf)
             continue
-        with open(out, "w", encoding="utf-8") as f:
-            f.write(md)
         print(f"✓ {out}  ({st['chars']:,} حرف — {stats_summary(st)})")
 
     if failed:
