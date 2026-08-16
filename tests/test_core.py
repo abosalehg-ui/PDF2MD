@@ -9,7 +9,6 @@
 
 from src import core
 
-
 # ═══════════ أدوات بناء rawdict مصطنع ═══════════
 
 class FakePage:
@@ -37,7 +36,7 @@ def page_of(chars, size=12.0, font="Test"):
 
 def text_of(page, **kw):
     lines = core.build_lines(core.page_units(page, **kw))
-    return "\n".join(l["text"] for l in lines)
+    return "\n".join(line["text"] for line in lines)
 
 
 # ═══════════ ١. الرباط المقلوب ═══════════

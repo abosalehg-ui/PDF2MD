@@ -17,7 +17,10 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 
-import fitz
+try:                                  # انظر التعليق في core.py
+    import pymupdf as fitz
+except ImportError:                     # PyMuPDF < 1.24.3
+    import fitz
 
 from . import core
 
@@ -40,6 +43,7 @@ class Options:
     drop_toc: bool = True          # تخطّي صفحات الفهرس الأصلية
     footnotes: str = "quote"       # quote | inline | drop
     build_toc: bool = True         # توليد فهرس بروابط داخلية
+    tables: bool = True            # بناء جداول Markdown من صفوف الجداول المرصودة
     title: str = ""                # العنوان الرئيسي (فارغ = بلا عنوان)
     page_from: int = 0             # 0 = من البداية
     page_to: int = 0               # 0 = حتى النهاية
@@ -71,6 +75,7 @@ FOOTER_ZONE = 0.88      # أسفل الصفحة — منطقة التذييل و
 NOTE_ZONE = 0.45        # الحواشي لا تُلتقط إلا في النصف السفلي
 NOTE_SMALLER = 2.0      # الحاشية أصغر من المتن بهذا المقدار على الأقل
 INDENT_TOL = 40         # إزاحة أفقية تدل على بداية فقرة جديدة
+LINE_WEIGHT_CAP = 80    # سقف مساهمة السطر الواحد في ترجيح حجم المتن
 
 
 # ═══════════════════════ المُجمِّع ═══════════════════════
@@ -112,8 +117,38 @@ class Builder:
         self.out += ["", "#" * level + " " + text, ""]
         self.toc.append((level, text))
 
+    def table(self, rows):
+        """
+        يبني جدول Markdown من صفوف خلايا. الصف الأول رأس الجدول.
+
+        الصفوف تُسوّى إلى أعرض صف (الخلايا الناقصة تُملأ فراغًا) لأن Markdown
+        يتطلب عدد أعمدة ثابتًا، والشرطة العمودية داخل الخلية تُهرَّب وإلا
+        كسرت الجدول.
+        """
+        self.flush()
+        width = max(len(r) for r in rows)
+        norm = [[c.replace("|", "\\|") for c in r] + [""] * (width - len(r))
+                for r in rows]
+        self.out.append("| " + " | ".join(norm[0]) + " |")
+        self.out.append("|" + "---|" * width)
+        for row in norm[1:]:
+            self.out.append("| " + " | ".join(row) + " |")
+        self.out.append("")
+
 
 # ═══════════════════════ التصنيف ═══════════════════════
+
+def heading_shaped(text):
+    """
+    هل يصلح النص أن يكون عنوانًا شكلًا، بغضّ النظر عن حجم خطه؟
+
+    العنوان قصير ولا ينتهي بنقطة أو فاصلة أو فاصلة منقوطة — تلك خواتيم
+    الجُمل. النقطتان مستثناتان لأن العناوين القانونية تنتهي بهما كثيرًا
+    («المادة الأولى:»)، وتُجرَّد لاحقًا عند بناء العنوان.
+    """
+    stripped = text.rstrip()
+    return len(stripped) < 120 and not stripped.endswith((".", "،", "؛"))
+
 
 def classify(line, opt, body_size):
     """يرجّع أحد: top | sub | laiha | item | definition | para."""
@@ -138,11 +173,15 @@ def classify(line, opt, body_size):
     if opt.profile == "plain":
         return "item" if (RE_ITEM.match(t) or RE_BULLET.match(t)) else "para"
 
-    # auto — الحكم بحجم الخط مقارنًا بحجم المتن الغالب
-    if size >= body_size + 3.5 and len(t) < 120:
-        return "top"
-    if (size >= body_size + 1.2 or (bold and size >= body_size + 0.5)) and len(t) < 120:
-        return "sub"
+    # auto — الحكم بحجم الخط مقارنًا بحجم المتن الغالب، بشرط شكل العنوان.
+    # الحجم وحده لا يكفي: في الصفحة المحشوّة بنص صغير كثيف يخرج حجم المتن
+    # الغالب أصغر من المتن الحقيقي، فترتفع الفقرات كلها فوق العتبة وتصير
+    # «عناوين». الشكل يمنع ذلك — والجملة المنتهية بنقطة ليست عنوانًا.
+    if heading_shaped(t):
+        if size >= body_size + 3.5:
+            return "top"
+        if size >= body_size + 1.2 or (bold and size >= body_size + 0.5):
+            return "sub"
     if RE_ITEM.match(t) or RE_BULLET.match(t):
         return "item"
     return "para"
@@ -150,10 +189,10 @@ def classify(line, opt, body_size):
 
 def is_toc_page(lines, body_size):
     """صفحة فهرس أصلية: أغلب أسطرها أصغر من المتن وتنتهي برقم صفحة."""
-    cand = [l for l in lines if l["size"] < body_size - 1]
+    cand = [line for line in lines if line["size"] < body_size - 1]
     if len(cand) < 6:
         return False
-    hits = sum(1 for l in cand if RE_TOCLINE.match(l["text"]))
+    hits = sum(1 for line in cand if RE_TOCLINE.match(line["text"]))
     return hits >= max(6, 0.6 * len(cand))
 
 
@@ -161,12 +200,32 @@ def body_font_size(pages):
     """
     حجم خط المتن الغالب: الأكثر تكرارًا موزونًا بعدد الحروف لا بعدد الأسطر،
     حتى لا يطغى عشرون عنوانًا قصيرًا على مئة سطر متن.
+
+    مساهمة السطر الواحد مسقوفة بـ LINE_WEIGHT_CAP: بدون السقف تغلب حاشيةٌ
+    من ثلاثة أسطر طويلة عشرةَ أسطر متن، لأن الوزن يقيس الحروف لا الأسطر.
+
+    السقف وحده لا يكفي حين يكون النص الصغير كثيرَ الأسطر أيضًا (صفحة جدول
+    كثيف)، فقد يخرج حجم المتن أصغر من الحقيقي. الحارس ضد الضرر الفعلي —
+    ترقية المتن إلى عناوين — في classify لا هنا، فهو يشترط شكل العنوان
+    لا مجرد كِبَر الحجم.
     """
     weight = Counter()
     for _, lines, _ in pages:
-        for l in lines:
-            weight[round(l["size"] * 2) / 2] += len(l["text"])
+        for line in lines:
+            weight[round(line["size"] * 2) / 2] += min(len(line["text"]),
+                                                       LINE_WEIGHT_CAP)
     return weight.most_common(1)[0][0] if weight else 12.0
+
+
+def boiler_key(text):
+    """
+    مفتاح مقارنة الترويسة والتذييل: الأرقام مجرّدة لأنها تتغيّر كل صفحة.
+
+    الدالة واحدة عمدًا — الكود الذي يبني مجموعة الترويسات والكود الذي يبحث
+    فيها لازم يتفقان حرفيًا على صيغة التطبيع، وأي انحراف بينهما يعطّل حذف
+    الترويسات بصمت بلا خطأ ولا تحذير.
+    """
+    return re.sub(r"[\d٠-٩]+", "#", text)
 
 
 def repeated_headers(pages, total):
@@ -178,16 +237,30 @@ def repeated_headers(pages, total):
     counter = Counter()
     for _, lines, height in pages:
         counter.update({
-            re.sub(r"\d+", "#", l["text"]) for l in lines
-            if (l["y0"] / height < HEADER_ZONE
-                or l["y0"] / height > FOOTER_ZONE) and len(l["text"]) > 4
+            boiler_key(line["text"]) for line in lines
+            if (line["y0"] / height < HEADER_ZONE
+                or line["y0"] / height > FOOTER_ZONE) and len(line["text"]) > 4
         })
     return {k for k, v in counter.items() if v >= max(3, 0.05 * total)}
 
 
-def anchor_of(text):
-    """مرساة عنوان صالحة للروابط الداخلية في Markdown."""
-    return re.sub(r"[^\w\s؀-ۿ-]", "", text).strip().replace(" ", "-")
+def anchor_of(text, seen=None):
+    """
+    مرساة عنوان صالحة للروابط الداخلية في Markdown.
+
+    التصغير إلزامي: مصيّرات Markdown (ومنها GitHub) تصغّر المراسي دائمًا،
+    فعنوان «Chapter One» مرساه `#chapter-one`، ورابط `#Chapter-One` لا يفتح
+    شيئًا. العناوين العربية لا تتأثر لأنها بلا حالة أحرف.
+
+    مرّر قاموس `seen` لفضّ تعارض العناوين المتكررة — وهو شائع جدًّا في
+    المستندات القانونية («الفصل الأول» تحت كل باب). بدونه تشترك العناوين
+    المتطابقة في مرساة واحدة فتذهب كل روابطها إلى الأول.
+    """
+    anchor = re.sub(r"[^\w\s؀-ۿ-]", "", text).strip().replace(" ", "-").lower()
+    if seen is None:
+        return anchor
+    seen[anchor] = seen.get(anchor, 0) + 1
+    return anchor if seen[anchor] == 1 else f"{anchor}-{seen[anchor] - 1}"
 
 
 # ═══════════════════════ التحويل ═══════════════════════
@@ -210,13 +283,20 @@ def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
         if doc.needs_pass:
             raise ValueError("الملف محمي بكلمة مرور — أزل الحماية أولًا.")
         n = len(doc)
+        # نطاق خارج المدى خطأ صريح لا يُبتلع: لو سقط بصمت إلى «الملف كله»
+        # لاستلم من طلب الصفحات ٥٠٠–٦٠٠ كتابًا كاملًا وهو يظنّه الجزء المطلوب.
+        if opt.page_from and opt.page_from > n:
+            raise ValueError(
+                f"بداية النطاق ({opt.page_from}) تتجاوز عدد صفحات الملف ({n}).")
         lo = max(0, (opt.page_from or 1) - 1)
         hi = min(n - 1, (opt.page_to or n) - 1)
         if hi < lo:
-            lo, hi = 0, n - 1
+            hi = n - 1
+            say(f"⚠ نهاية النطاق ({opt.page_to}) أصغر من بدايته "
+                f"({opt.page_from}) — حُوّل الملف من الصفحة {lo + 1} إلى نهايته.")
         total = hi - lo + 1
         st = {"lig": 0, "pairs": {}, "pages": total, "toc_skipped": 0,
-              "headings": 0, "notes": 0, "chars": 0}
+              "headings": 0, "notes": 0, "chars": 0, "tables": 0}
 
         # ── ١) الاستخراج ──
         pages = []
@@ -243,9 +323,21 @@ def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
             say(f"أسطر ترويسة متكررة سيتم حذفها: {len(boiler)}")
 
         # ── ٣) البناء ──
-        B = Builder(opt)
+        builder = Builder(opt)
         prev = None
         in_laiha = False
+        pending_rows = []      # صفوف جدول متتالية بانتظار الإغلاق
+
+        def close_table():
+            """يفرغ الصفوف المتراكمة: صفّان فأكثر جدول، والصف الواحد فقرة."""
+            if not pending_rows:
+                return
+            if len(pending_rows) >= 2:
+                builder.table([r["cells"] for r in pending_rows])
+                st["tables"] += 1
+            else:
+                builder.para(pending_rows[0]["text"], True)
+            pending_rows.clear()
 
         for k, (i, lines, height) in enumerate(pages):
             if cancel is not None and cancel.is_set():
@@ -254,90 +346,104 @@ def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
                 st["toc_skipped"] += 1
                 continue
 
-            has_body = any(l["size"] >= body_size - 0.5 for l in lines)
+            has_body = any(line["size"] >= body_size - 0.5 for line in lines)
             body, notes = [], []
 
-            for l in lines:
-                t, rel = l["text"], l["y0"] / height
+            for line in lines:
+                t, rel = line["text"], line["y0"] / height
                 # الترويسة: المتكررة أو أي سطر صغير في منطقتها.
                 # التذييل: المتكرر (بعد تجريد الأرقام) — الحاشية نص فريد فلا تُمس.
                 if opt.drop_headers and (
-                        (rel < HEADER_ZONE and (re.sub(r"\d+", "#", t) in boiler
-                                                or l["size"] < body_size - 2))
-                        or (rel > FOOTER_ZONE
-                            and re.sub(r"\d+", "#", t) in boiler)):
+                        (rel < HEADER_ZONE and (boiler_key(t) in boiler
+                                                or line["size"] < body_size - 2))
+                        or (rel > FOOTER_ZONE and boiler_key(t) in boiler)):
                     continue
                 if rel > FOOTER_ZONE and RE_PAGENO.match(t):
                     continue
                 # الحاشية: أصغر خط في النصف السفلي — تُؤجَّل لنهاية القسم
-                if has_body and l["size"] <= body_size - NOTE_SMALLER and rel > NOTE_ZONE:
+                if (has_body and line["size"] <= body_size - NOTE_SMALLER
+                        and rel > NOTE_ZONE):
                     notes.append(t)
                     continue
-                body.append(l)
+                body.append(line)
 
-            for idx, l in enumerate(body):
-                kind = classify(l, opt, body_size)
-                t = l["text"]
+            for idx, line in enumerate(body):
+                t = line["text"]
+
+                # صف جدول: يُراكَم حتى ينقطع التتابع، ثم يُبنى الجدول دفعةً
+                if opt.tables and line.get("row") and len(line.get("cells", [])) >= 2:
+                    pending_rows.append(line)
+                    prev = line
+                    continue
+                close_table()
+
+                kind = classify(line, opt, body_size)
 
                 # فقرة جديدة إذا اتسعت الفجوة الرأسية عن ارتفاع السطر × para_gap
                 gap_big = False
                 if prev is not None and idx > 0:
-                    lh = max(l["y1"] - l["y0"], 1.0)
-                    gap_big = (l["y0"] - prev["y1"]) > lh * opt.para_gap
+                    lh = max(line["y1"] - line["y0"], 1.0)
+                    gap_big = (line["y0"] - prev["y1"]) > lh * opt.para_gap
 
                 if kind == "top":
-                    B.head(opt.h_top, t)
+                    builder.head(opt.h_top, t)
                     in_laiha = False
                 elif kind == "laiha":
                     # عنوان «اللائحة التنفيذية» يقف وحده: نعلّم ما بعده فقط
-                    B.flush()
+                    builder.flush()
                     in_laiha = True
                 elif kind == "sub":
                     title = re.sub(r"\s*:\s*$", "", t)
                     if in_laiha and RE_MADDA_N.match(t):
                         title = "اللائحة التنفيذية: " + title
                         in_laiha = False
-                    B.head(opt.h_sub, title)
+                    builder.head(opt.h_sub, title)
                 elif kind == "item":
                     # البند يُحفظ بترقيمه الأصلي كما هو، بلا إعادة ترقيم
-                    B.para(t, True)
+                    builder.para(t, True)
                 elif kind == "definition":
                     m = RE_DEF.match(t)
-                    B.para(f"**{m.group(1).strip()}:** {m.group(2).strip()}", True)
+                    builder.para(f"**{m.group(1).strip()}:** {m.group(2).strip()}",
+                                 True)
                 else:
                     new_para = gap_big or (
                         prev is not None and idx > 0
                         and prev["text"].endswith(END_PUNCT)
-                        and l["x1"] < prev["x1"] - INDENT_TOL
+                        and line["x1"] < prev["x1"] - INDENT_TOL
                     )
-                    B.para(t, new_para or not B.buf)
-                prev = l
+                    builder.para(t, new_para or not builder.buf)
+                prev = line
+
+            close_table()
 
             # سطر الحاشية الذي لا يبدأ برقم إشارة = تكملة للحاشية السابقة
             for note in notes:
-                if RE_FOOT.match(note) or not B.notes:
-                    B.notes.append(note)
+                if RE_FOOT.match(note) or not builder.notes:
+                    builder.notes.append(note)
                     st["notes"] += 1
                 else:
-                    B.notes[-1] += " " + note
+                    builder.notes[-1] += " " + note
 
             tick(70 + int(25 * (k + 1) / len(pages)), f"بناء ص {i + 1}")
 
-        B.dump_notes()
-        st["headings"] = len(B.toc)
+        close_table()
+        builder.dump_notes()
+        st["headings"] = len(builder.toc)
 
         # ── ٤) التجميع ──
         head = []
         if opt.title:
             head += [f"# {opt.title}", ""]
-        if opt.build_toc and B.toc:
+        if opt.build_toc and builder.toc:
             head += [f"{'#' * max(2, opt.h_top)} الفهرس", ""]
-            base = min(lvl for lvl, _ in B.toc)
-            for lvl, text in B.toc:
-                head.append("  " * (lvl - base) + f"- [{text}](#{anchor_of(text)})")
+            base = min(lvl for lvl, _ in builder.toc)
+            seen = {}       # يفضّ تعارض العناوين المتكررة عبر الفهرس كله
+            for lvl, text in builder.toc:
+                head.append("  " * (lvl - base)
+                            + f"- [{text}](#{anchor_of(text, seen)})")
             head += ["", "---", ""]
 
-        md = "\n".join(head + B.out)
+        md = "\n".join(head + builder.out)
         md = re.sub(r"\n{3,}", "\n\n", md).strip() + "\n"
         st["chars"] = len(md)
         tick(100, "تم")
@@ -361,9 +467,15 @@ CANARY = [
 ]
 
 
-def diagnose(pdf_path, sample_every=7, progress=None):
+def diagnose(pdf_path, sample_every=7, progress=None, cancel=None):
     """
     فحص سريع لحالة الملف قبل التحويل — على عيّنة صفحات لا على الملف كله.
+
+    فحص الحبر معطَّل هنا عمدًا: هو يكشف المسافات الوهمية، ولا علاقة له بقياس
+    تلف الرباطات وهو كل ما يقيسه التشخيص. تشغيله كان يرسم كل صفحة من العيّنة
+    بدقة ١٥٠ نقطة (١٢٩ عملية رسم على كتاب من ٩٠٠ صفحة) بلا فائدة.
+
+    cancel كائن اختياري له is_set() — عند ضبطه يُرفع ConversionCancelled.
 
     يرجّع dict فيه:
       pages / sampled / has_text / needs_ocr — بيانات الملف
@@ -383,7 +495,11 @@ def diagnose(pdf_path, sample_every=7, progress=None):
         st = {"lig": 0, "pairs": {}}
         parts = []
         for k, i in enumerate(idx):
-            parts.append("\n".join(l["text"] for l in core.page_lines(doc[i], st)))
+            if cancel is not None and cancel.is_set():
+                raise ConversionCancelled("أُلغي الفحص.")
+            parts.append("\n".join(
+                line["text"] for line in core.page_lines(doc[i], st,
+                                                         check_ink=False)))
             tick(int(100 * (k + 1) / len(idx)), f"فحص ص {i + 1}")
         fixed = "\n".join(parts)
 

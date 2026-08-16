@@ -24,15 +24,29 @@ def verdict_of(rows):
 
 
 def out_path_for(pdf, out, many):
-    """يحدّد مسار المخرَج: ملف واحد صريح، أو مجلد، أو بجانب ملف PDF."""
+    """
+    يحدّد مسار المخرَج: ملف واحد صريح، أو مجلد، أو بجانب ملف PDF.
+
+    حسابية بحتة بلا أي أثر على القرص — كانت تنشئ المجلد بنفسها، فكانت
+    الواجهة تُنشئ مجلدات لمجرد فحص وجود ملفات المخرَج قبل موافقة المستخدم،
+    وكان فشل الإنشاء يُرفع داخل slot في Qt فيُنهي التطبيق. إنشاء المجلد
+    مسؤولية موضع الكتابة الفعلي: ensure_parent().
+    """
     if out and not many and not os.path.isdir(out) and not out.endswith(os.sep):
         return out
     folder = out if out else (os.path.dirname(os.path.abspath(pdf)))
-    os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, os.path.splitext(os.path.basename(pdf))[0] + ".md")
+
+
+def ensure_parent(path):
+    """ينشئ مجلد الأب لمسار الكتابة إن لم يكن موجودًا."""
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
 
 def stats_summary(st):
     """سطر إحصاءات موحّد يُعرض بعد كل تحويل."""
     return (f"رباطات {st['lig']:,} | عناوين {st['headings']} | "
-            f"حواشي {st.get('notes', 0)} | فهارس متخطّاة {st.get('toc_skipped', 0)}")
+            f"حواشي {st.get('notes', 0)} | جداول {st.get('tables', 0)} | "
+            f"فهارس متخطّاة {st.get('toc_skipped', 0)}")

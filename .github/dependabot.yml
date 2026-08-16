@@ -1,0 +1,19 @@
+version: 2
+
+# PyMuPDF غلاف على MuPDF وهي مكتبة C تحلّل ملفات PDF غير موثوقة، فإصلاحاتها
+# الأمنية تستحق PR تلقائيًا لا انتظار ترقية يدوية.
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"

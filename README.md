@@ -105,7 +105,10 @@
 - **البنود المرقّمة** — `1-` و`3/1-` تُحفظ بترقيمها الأصلي دون إعادة ترقيم
 - **الحواشي** — تُلتقط بحجم الخط الأصغر في النصف السفلي، وتُؤجَّل حتى نهاية القسم لئلا تقطع الفقرات
 - **الترويسة والتذييل** — تُرصدان بتكرارهما عبر الصفحات وتُحذفان
-- **الفهرس الأصلي** — يُتخطّى، ويُولَّد بدلًا منه فهرس بروابط داخلية
+- **الفهرس الأصلي** — يُتخطّى، ويُولَّد بدلًا منه فهرس بروابط داخلية (المراسي مصغَّرة الحروف ومفضوضة التعارض، فالعناوين المتكررة لا تشترك في مرساة واحدة)
+- **الجداول** — صفوف الجدول المرصودة هندسيًا (أربعة أجزاء فأكثر تفصلها فجوات أوسع من `CELL_GAP`) تُجمَّع في جدول Markdown حقيقي؛ صفّان متتاليان على الأقل، والصف المعزول يبقى فقرة
+
+العنوان يشترط **شكل العنوان** لا مجرد كِبَر حجم الخط: الجملة المنتهية بنقطة أو فاصلة ليست عنوانًا مهما كبر خطها. بدون هذا الشرط تنقلب صفحة محشوّة بنص صغير كثيف فيصير متنها عناوين.
 
 ---
 
@@ -120,6 +123,18 @@ pip install -r requirements.txt
 <div dir="rtl">
 
 المتطلبات: `PyMuPDF` و`numpy` و`PyQt6` — وبايثون ٣٫٩ فأحدث. (`PyQt6` لازم للواجهة فقط؛ سطر الأوامر يعمل بدونه.)
+
+**تنبيه:** `run.sh` و`run.bat` يثبّتان المتطلبات تلقائيًا عند أول تشغيل على مستوى النظام أو المستخدم، لا داخل بيئة معزولة. هذا يريح الجمهور غير التقني، لكنه يخلط اعتماديات المشروع بغيرها. من يفضّل العزل يثبّت يدويًا:
+
+</div>
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # ويندوز: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+<div dir="rtl">
 
 ## التشغيل
 
@@ -152,6 +167,9 @@ python main.py *.pdf -o ./md/
 # الكتابة فوق مخرَج موجود مسبقًا تتطلب إذنًا صريحًا
 python main.py كتاب.pdf --force
 
+# تعطيل بناء الجداول — صفوف الجداول تخرج فقرات
+python main.py تقرير.pdf --no-tables -o تقرير.md
+
 # كل الخيارات
 python main.py --help
 ```
@@ -171,10 +189,13 @@ python main.py --help
 | **فجوة الفقرة** | ضبط حساسية لَمّ الأسطر في فقرة |
 | **الحواشي** | اقتباس منفصل `>` أو ضمن النص أو حذف |
 | **زر الفحص التشخيصي** | جدول قبل/بعد لثماني كلمات مؤشّرة + عيّنة نص + هل الملف مصوّر يحتاج OCR |
+| **الجداول** | تجميع صفوف الجداول المرصودة في جداول Markdown — يمكن تعطيله |
 | **تبويب المعاينة** | الناتج مباشرة قبل الحفظ |
 | **تبويب السجل** | تفاصيل التنفيذ وأي أخطاء |
 
-التحويل يعمل في `QThread` منفصل، فالواجهة لا تتجمّد. الواجهة عربية كاملة الاتجاه (RTL)، بخط `Amiri` للعناوين و`Cairo` للمتن.
+التحويل يعمل في `QThread` منفصل، فالواجهة لا تتجمّد، والفحص التشخيصي قابل للإيقاف مثله. الواجهة عربية كاملة الاتجاه (RTL)، بخط `Amiri` للعناوين و`Cairo` للمتن.
+
+الاختيارات (النمط، الحواشي، مجلد الحفظ، مستويات العناوين، مربّعات الخيارات، وحجم النافذة) **تُحفظ تلقائيًا** عند الخروج وتُستعاد عند التشغيل التالي، فلا يُعاد ضبطها كل مرة.
 
 ---
 
@@ -199,7 +220,7 @@ python main.py --help
 ## الحدود المعروفة
 
 - **الملفات المصوّرة** (بلا طبقة نص) خارج نطاق الأداة — تحتاج OCR أولًا، والفحص التشخيصي يخبرك بذلك.
-- **الجداول متعددة الأعمدة** تخرج كل خلية في سطر مستقل — مقروءة، لكنها ليست جدول Markdown.
+- **كشف الجداول هندسي** — الصف يحتاج أربعة أجزاء فأكثر تفصلها فجوات أوسع من `CELL_GAP`، ويحتاج صفّين متتاليين على الأقل ليصير جدولًا. الجداول غير المنتظمة أو المدموجة الخلايا تخرج فقرات، و`--no-tables` تعطّل الميزة كليًا.
 - **الأخطاء المطبعية في الأصل** تُنقل كما هي — الأداة أمينة للمصدر ولا تصحّح المحتوى.
 - الأداة موجَّهة للعربي، لكنها تكتشف الأسطر اللاتينية تلقائيًّا وتعاملها من اليسار لليمين.
 - **الكتب الضخمة جدًّا** (ألف صفحة فأكثر): أسطر المستند كله تُحمَّل في الذاكرة قبل البناء، لأن حساب حجم المتن الغالب والترويسات المتكررة يحتاج المستند كاملًا.
@@ -217,11 +238,12 @@ PDF2MD/
 ├── run.bat           مشغّل ويندوز — يثبّت المتطلبات تلقائيًا
 ├── run.sh            مشغّل لينكس/ماك — يثبّت المتطلبات تلقائيًا
 ├── requirements.txt
+├── pyproject.toml    بيانات الحزمة وإعداد ruff و pytest
 ├── README.md
 ├── LICENSE
 ├── src/
-│   ├── core.py       محرّك الاستخراج — الرباطات، الاتجاه، الحبر، المسافات
-│   ├── structure.py  طبقة البنية — العناوين، الفقرات، الحواشي، الأنماط
+│   ├── core.py       محرّك الاستخراج — الرباطات، الاتجاه، الحبر، المسافات، الخلايا
+│   ├── structure.py  طبقة البنية — العناوين، الفقرات، الجداول، الحواشي، الأنماط
 │   ├── common.py     المشترك بين الواجهتين — الحكم التشخيصي ومسار المخرَج
 │   ├── gui.py        واجهة PyQt6
 │   └── cli.py        منطق سطر الأوامر
@@ -230,7 +252,7 @@ PDF2MD/
 
 <div dir="rtl">
 
-`src` حزمة بايثون عادية والاستيرادات داخلها نسبية، فتُستورد من جذر المشروع مباشرة بلا أي تلاعب بـ `sys.path`.
+`src` حزمة بايثون عادية والاستيرادات داخلها نسبية، فتُستورد من جذر المشروع مباشرة. `main.py` وحده يضيف جذر المشروع إلى `sys.path` ليعمل عند تشغيله من مجلد آخر.
 
 `core.py` مستقل تمامًا ويمكن استعماله وحده:
 
@@ -319,7 +341,7 @@ No dictionary, no guessing. Every fix is a geometric rule derived from glyph coo
 
 7. **Final cleanup** — strip bidi control characters (`200E` `200F` `202A-202E` `2066-2069` `00AD` `FEFF`), apply `NFC`, remove spaces after opening and before closing brackets and before punctuation, normalise the slash between digits, and join `1442 هـ` into `1442هـ`.
 
-8. **Structure** — headings by font size (or `الباب / الفصل / المادة` patterns in the Saudi-law profile); broken lines reflowed into paragraphs by vertical gap; numbered items kept with their original numbering; footnotes captured by smaller font size in the lower half and deferred to the end of the section; repeated headers/footers detected by recurrence across pages and dropped; the original table of contents skipped and replaced by a generated one with internal links.
+8. **Structure** — headings by font size **and heading shape** (a line ending in a full stop is never a heading, however large its font — without that guard a page dense with small text inverts and its body becomes headings), or `الباب / الفصل / المادة` patterns in the Saudi-law profile; broken lines reflowed into paragraphs by vertical gap; numbered items kept with their original numbering; detected table rows assembled into real Markdown tables; footnotes captured by smaller font size in the lower half and deferred to the end of the section; repeated headers/footers detected by recurrence across pages and dropped; the original table of contents skipped and replaced by a generated one with lowercased, collision-resolved anchors.
 
 ## Install & run
 
@@ -351,9 +373,11 @@ Located in `src/core.py`:
 ## Known limits
 
 - **Scanned files** (no text layer) are out of scope — they need OCR first; the diagnostic tells you so.
-- **Multi-column tables** emit one cell per line — readable, but not a Markdown table.
+- **Table detection is geometric** — a row needs four or more fragments separated by gaps wider than `CELL_GAP`, and at least two consecutive rows to become a table. Irregular or merged-cell layouts fall back to paragraphs; `--no-tables` disables the feature entirely.
 - **Typos in the source** are carried through verbatim; the tool is faithful to the source and does not correct content.
 - Arabic-oriented, but Latin-only lines are detected automatically and treated left-to-right.
+- **Very large books** (1000+ pages): the whole document's lines are held in memory before building, because the dominant body font size and the repeated headers can only be computed across the full document.
+- **Password-protected files** are rejected with a clear message — remove the protection first.
 
 ## Layout
 
@@ -363,18 +387,19 @@ PDF2MD/
 ├── run.bat           Windows launcher — auto-installs requirements
 ├── run.sh            Linux/macOS launcher — auto-installs requirements
 ├── requirements.txt
+├── pyproject.toml    package metadata, ruff and pytest config
 ├── README.md
 ├── LICENSE
 ├── src/
-│   ├── core.py       extraction engine — ligatures, direction, ink, spacing
-│   ├── structure.py  structure layer — headings, paragraphs, footnotes, profiles
+│   ├── core.py       extraction engine — ligatures, direction, ink, spacing, cells
+│   ├── structure.py  structure layer — headings, paragraphs, tables, footnotes, profiles
 │   ├── common.py     shared between CLI and GUI — diagnostics verdict, output paths
 │   ├── gui.py        PyQt6 interface
 │   └── cli.py        command-line logic
 └── tests/            pytest suite — runs automatically in GitHub Actions
 ```
 
-`src` is a regular Python package with relative imports inside — use `from src import core` or `from src.structure import Options, convert` from the project root; no `sys.path` tricks needed. Run the tests with `pytest -q`.
+`src` is a regular Python package with relative imports inside — use `from src import core` or `from src.structure import Options, convert` from the project root. Only `main.py` prepends the project root to `sys.path`, so it runs from any working directory. Run the tests with `pytest -q`.
 
 ## License
 

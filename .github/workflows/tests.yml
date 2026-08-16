@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# الـworkflow لا يستعمل GITHUB_TOKEN إطلاقًا، ويشتغل على pull_request من
+# التفرّعات — فالصلاحية الافتراضية (قد تكون كتابة) زائدة بلا مقابل.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,5 +21,28 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       # PyQt6 غير لازم للاختبارات — الواجهة لا تُختبر في CI
-      - run: pip install "PyMuPDF>=1.24,<2" "numpy>=1.24,<3" pytest
+      - run: pip install "PyMuPDF>=1.26,<2" "numpy>=1.24,<3" pytest
       - run: pytest -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      # الأداة تحلّل ملفات PDF غير موثوقة عبر MuPDF (مكتبة C) — فحص الثغرات
+      # المعروفة في الاعتماديات تنبيه لا بوابة، حتى لا تتعطّل الدفعات على
+      # ثغرة في اعتمادية غير مباشرة لا إصلاح لها بعد.
+      - run: pip-audit -r requirements.txt || true
