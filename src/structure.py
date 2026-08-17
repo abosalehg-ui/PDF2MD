@@ -40,6 +40,7 @@ class Options:
     check_ink: bool = True         # فحص الحبر (أدق، أبطأ ~٣×)
     unify_digits: bool = True      # توحيد الأرقام الهندية إلى عربية
     drop_headers: bool = True      # حذف الترويسة والتذييل المتكررة
+    drop_watermark: bool = True    # حذف العلامة المائية (نص مائل أو باهت)
     drop_toc: bool = True          # تخطّي صفحات الفهرس الأصلية
     footnotes: str = "quote"       # quote | inline | drop
     build_toc: bool = True         # توليد فهرس بروابط داخلية
@@ -296,7 +297,8 @@ def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
                 f"({opt.page_from}) — حُوّل الملف من الصفحة {lo + 1} إلى نهايته.")
         total = hi - lo + 1
         st = {"lig": 0, "pairs": {}, "pages": total, "toc_skipped": 0,
-              "headings": 0, "notes": 0, "chars": 0, "tables": 0}
+              "headings": 0, "notes": 0, "chars": 0, "tables": 0,
+              "watermark": 0}
 
         # ── ١) الاستخراج ──
         pages = []
@@ -307,11 +309,14 @@ def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
             lines = core.page_lines(page, st,
                                     unify_digits=opt.unify_digits,
                                     check_ink=opt.check_ink,
-                                    fix_ligatures=opt.fix_ligatures)
+                                    fix_ligatures=opt.fix_ligatures,
+                                    drop_watermark=opt.drop_watermark)
             pages.append((i, lines, page.rect.height))
             if k % 5 == 0 or k == total - 1:
                 tick(int(70 * (k + 1) / total), f"استخراج ص {i + 1} / {hi + 1}")
         say(f"استُخرجت {total} صفحة — أُصلح {st['lig']:,} رباطًا مقلوبًا.")
+        if st["watermark"]:
+            say(f"حُذفت علامة مائية: {st['watermark']:,} جزء نصي مائل أو باهت.")
 
         # ── ٢) قياسات المستند ──
         body_size = body_font_size(pages)
