@@ -36,7 +36,8 @@ def page(lines):
 
 
 def text_of(page_, **kw):
-    return "\n".join(l["text"] for l in core.build_lines(core.page_units(page_, **kw)))
+    lines = core.build_lines(core.page_units(page_, **kw))
+    return "\n".join(line_["text"] for line_ in lines)
 
 
 # ═══════════ الرصد ═══════════
