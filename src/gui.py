@@ -434,11 +434,12 @@ class MainWindow(QMainWindow):
         self.ck_ink = QCheckBox("فحص الحبر — أدق، أبطأ ٣×")
         self.ck_dig = QCheckBox("توحيد الأرقام الهندية ← عربية")
         self.ck_hdr = QCheckBox("حذف الترويسة والتذييل المتكررة")
+        self.ck_wmk = QCheckBox("حذف العلامة المائية — نص مائل أو باهت")
         self.ck_toc = QCheckBox("تخطّي صفحات الفهرس الأصلية")
         self.ck_gen = QCheckBox("توليد فهرس تلقائي بروابط داخلية")
         self.ck_tbl = QCheckBox("بناء جداول Markdown من صفوف الجداول")
-        for c in (self.ck_lig, self.ck_ink, self.ck_dig,
-                  self.ck_hdr, self.ck_toc, self.ck_gen, self.ck_tbl):
+        for c in (self.ck_lig, self.ck_ink, self.ck_dig, self.ck_hdr,
+                  self.ck_wmk, self.ck_toc, self.ck_gen, self.ck_tbl):
             c.setChecked(True)
             gl.addWidget(c, r, 0, 1, 2)
             r += 1
@@ -633,8 +634,8 @@ class MainWindow(QMainWindow):
     def _checkboxes(self):
         return {"fix_ligatures": self.ck_lig, "check_ink": self.ck_ink,
                 "unify_digits": self.ck_dig, "drop_headers": self.ck_hdr,
-                "drop_toc": self.ck_toc, "build_toc": self.ck_gen,
-                "tables": self.ck_tbl}
+                "drop_watermark": self.ck_wmk, "drop_toc": self.ck_toc,
+                "build_toc": self.ck_gen, "tables": self.ck_tbl}
 
     # ---------- الحالة ----------
 
@@ -645,6 +646,7 @@ class MainWindow(QMainWindow):
             check_ink=self.ck_ink.isChecked(),
             unify_digits=self.ck_dig.isChecked(),
             drop_headers=self.ck_hdr.isChecked(),
+            drop_watermark=self.ck_wmk.isChecked(),
             drop_toc=self.ck_toc.isChecked(),
             footnotes=FOOTNOTES[self.cb_foot.currentIndex()][1],
             build_toc=self.ck_gen.isChecked(),

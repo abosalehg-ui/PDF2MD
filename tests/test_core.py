@@ -73,6 +73,28 @@ def test_zero_width_before_diacritic_not_swapped():
     assert "م" in out and "ل" in out
 
 
+def test_three_char_ligature_restored():
+    # «الله» جليف واحد يبتلع (ه ل ل) بعرض صفر ثم الألف بالصندوق كاملًا.
+    # المبادلة الثنائية وحدها كانت تنتج «لهال».
+    chars = [
+        ch("ه", 96, x1=96.0),
+        ch("ل", 96, x1=96.0),
+        ch("ل", 96, x1=96.0),
+        ch("ا", 82, x1=96),
+    ]
+    stats = {}
+    assert text_of(page_of(chars), stats=stats) == "الله"
+    assert stats["lig"] == 1
+    assert stats["pairs"] == {"الله": 1}
+
+
+def test_zero_width_run_at_span_end_kept_as_is():
+    # تتابع بعرض صفر بلا حرف حامل بعده: يُترك كما هو بلا مبادلة ولا فقد
+    chars = [ch("ا", 92, x1=96), ch("ه", 92, x1=92.0), ch("ل", 92, x1=92.0)]
+    out = text_of(page_of(chars))
+    assert set(out) == set("اهل")
+
+
 # ═══════════ ٢. المسافات من الفجوات ═══════════
 
 def test_gap_inserts_space():

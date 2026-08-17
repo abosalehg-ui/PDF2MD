@@ -50,6 +50,11 @@ INK_PAD = 0.30
 # تداخل أفقي أكبر من هذه النسبة من أصغر عرض = الجزآن ليسا على سطر واحد
 SEG_CLASH = 0.50
 
+# العلامة المائية: شفافية أقل من هذه = نص باهت مرسوم خلف المتن
+WM_ALPHA = 0.60
+# انحراف اتجاه السطر عن الأفق أكبر من هذا = سطر مائل لا ينتمي للمتن
+WM_TILT = 0.08
+
 # ═══════════════ خرائط ورموز ═══════════════
 
 AR_LETTER = re.compile(r"[ء-ي]")
@@ -121,28 +126,90 @@ class Unit:
 
 # ═══════════════ ١. الاستخراج وإصلاح الرباطات ═══════════════
 
-def page_units(page, stats=None, fix_ligatures=True):
+def _zero_width(char):
+    """هل الحرف بعرض صفر؟ أي أنه ملتصق بجليف رباط يحمله حرف لاحق."""
+    return (char["bbox"][2] - char["bbox"][0]) <= ZERO_W
+
+
+def _tilted(line):
+    """
+    هل السطر مائل عن الأفق؟ dir هو (جيب تمام، جيب) اتجاه الكتابة، فالمتن
+    الأفقي يعطي (1, 0) أو (-1, 0) مهما كان اتجاه اللغة.
+    """
+    dy = line.get("dir", (1.0, 0.0))[1]
+    return abs(dy) > WM_TILT
+
+
+def _faint(span):
+    """هل الجزء مرسوم بشفافية؟ alpha في rawdict عدد من ٠ إلى ٢٥٥."""
+    return span.get("alpha", 255) < WM_ALPHA * 255
+
+
+def drop_watermarks(blocks):
+    """
+    يحذف أجزاء العلامة المائية قبل بناء الأسطر، ويرجّع (الكتل، عدد الأجزاء
+    المحذوفة).
+
+    العلامة المائية (توقيع أو ختم «صورة طبق الأصل» أو شعار جهة) تُرسم فوق
+    المتن أو خلفه بميل وشفافية، فتتقاطع إحداثياتها مع أسطر المتن. وبما أن
+    بناء الأسطر يضمّ الأجزاء حسب مركزها الرأسي، فإن جزءًا مائلًا يعبر عشرة
+    أسطر يُحشر داخل كل سطر يمرّ به: النص يتقطّع، والكلمات تلتحم، وأسطر
+    المتن القصيرة الناتجة تُقرأ عناوين. لذلك يُحذف قبل الضمّ لا بعده.
+
+    الرصد بعلامتين مستقلتين — أي واحدة تكفي:
+      • الشفافية: المتن يُطبع معتمًا، فالباهت طبقة زخرفية لا محتوى.
+      • الميل: المتن أفقي، والمائل ختم أو توقيع.
+
+    حارس الميل: لو كانت كل أسطر الصفحة مائلة فالصفحة نفسها مائلة (مسح
+    ضوئي مائل أو صفحة عرضية بلا /Rotate)، فلا يُحذف شيء — الميل يميّز
+    العلامة عن المتن فقط حين يوجد متن أفقي تُقارن به.
+    """
+    lines = [line for blk in blocks for line in blk["lines"]]
+    has_upright = any(not _tilted(line) for line in lines)
+
+    kept, dropped = [], 0
+    for blk in blocks:
+        keep_lines = []
+        for line in blk["lines"]:
+            tilted = has_upright and _tilted(line)
+            spans = [s for s in line["spans"] if not (tilted or _faint(s))]
+            dropped += len(line["spans"]) - len(spans)
+            if spans:
+                keep_lines.append(dict(line, spans=spans))
+        if keep_lines:
+            kept.append(dict(blk, lines=keep_lines))
+    return kept, dropped
+
+
+def page_units(page, stats=None, fix_ligatures=True, drop_watermark=True):
     """
     يقرأ الصفحة بـ rawdict ويحوّلها إلى قائمة وحدات بإحداثياتها.
 
     إصلاح الرباط المقلوب
     ────────────────────
-    في هذه الملفات يُرسم الرباط بجليف واحد، فيُصدَّر حرفاه كالتالي:
-    الحرف الأول بعرض صفر (لأنه ملتصق بالجليف)، والحرف الثاني يحمل
-    الصندوق كاملًا — لكن ترتيبهما في المجرى معكوس.
+    في هذه الملفات يُرسم الرباط بجليف واحد، فتُصدَّر حروفه كالتالي: كل حرف
+    عدا الأخير بعرض صفر (لأنه ملتصق بالجليف)، والأخير يحمل الصندوق كاملًا —
+    وترتيبها في المجرى بصريّ، أي معكوس عن الترتيب المنطقي.
 
-    القاعدة: أي حرف عرضه <= ZERO_W وليس علامة تشكيل، يُبدَّل مع الحرف
-    الذي يليه مباشرة. النتيجة: chars[i+1] + chars[i].
+    القاعدة: كل تتابع من الحروف عرضها <= ZERO_W (وليست تشكيلًا) يليه حرف
+    حامل للصندوق، يخرج: الحرف الحامل ثم حروف التتابع معكوسة.
+
+    التتابع لا يُقيَّد بحرف واحد: «الله» تُرسم بجليف واحد يبتلع (ه ل ل)
+    بعرض صفر ثم (ا) بالصندوق، فالمبادلة الثنائية وحدها كانت تنتج «لهال».
 
     القاعدة عامة ولا تُقيَّد بحرف اللام، فتغطي تلقائيًا:
-    لا لأ لإ لآ لم لح لج لخ تا با في — وأي رباط آخر في أي خط.
+    لا لأ لإ لآ لم لح لج لخ تا با في لله — وأي رباط آخر في أي خط.
     """
     units = []
     sid = lid = 0
 
-    for blk in page.get_text("rawdict")["blocks"]:
-        if blk["type"] != 0:           # صور وغيرها
-            continue
+    blocks = [b for b in page.get_text("rawdict")["blocks"] if b["type"] == 0]
+    if drop_watermark:
+        blocks, dropped = drop_watermarks(blocks)
+        if stats is not None and dropped:
+            stats["watermark"] = stats.get("watermark", 0) + dropped
+
+    for blk in blocks:
         for line in blk["lines"]:
             lid += 1
             for span in line["spans"]:
@@ -171,21 +238,25 @@ def page_units(page, stats=None, fix_ligatures=True):
                         continue
 
                     # رباط مقلوب
-                    if (fix_ligatures
-                            and (c["bbox"][2] - c["bbox"][0]) <= ZERO_W
-                            and i + 1 < n
-                            and not chars[i + 1]["c"].isspace()
-                            and chars[i + 1]["c"] not in TASHKEEL):
-                        base = chars[i + 1]
-                        units.append(Unit(base["c"] + g, base["bbox"], size,
-                                          font, flags, sid, lid))
-                        if stats is not None:
-                            stats["lig"] = stats.get("lig", 0) + 1
-                            pairs = stats.setdefault("pairs", {})
-                            key = base["c"] + g
-                            pairs[key] = pairs.get(key, 0) + 1
-                        i += 2
-                        continue
+                    if fix_ligatures and _zero_width(c):
+                        j = i + 1
+                        while (j < n and _zero_width(chars[j])
+                               and not chars[j]["c"].isspace()
+                               and chars[j]["c"] not in TASHKEEL):
+                            j += 1
+                        if (j < n and not chars[j]["c"].isspace()
+                                and chars[j]["c"] not in TASHKEEL):
+                            base = chars[j]
+                            key = base["c"] + "".join(
+                                chars[k]["c"] for k in range(j - 1, i - 1, -1))
+                            units.append(Unit(key, base["bbox"], size,
+                                              font, flags, sid, lid))
+                            if stats is not None:
+                                stats["lig"] = stats.get("lig", 0) + 1
+                                pairs = stats.setdefault("pairs", {})
+                                pairs[key] = pairs.get(key, 0) + 1
+                            i = j + 1
+                            continue
 
                     units.append(Unit(g, c["bbox"], size, font, flags, sid, lid))
                     i += 1
@@ -216,6 +287,11 @@ def _inked(right, left, ink, z, y0, y1):
     من كل جهة (حتى لا نلتقط حواف الحرفين)، ونحدّ النطاق الرأسي بأعلى
     INK_BAND من السطر (لتجاهل الذيول والتسطير).
 
+    ثم نقصر النطاق على امتداد الحرفين نفسيهما: نطاق السطر يبدأ من أعلى
+    وحدة فيه، فحرف واحد مرفوع (بداية فقرة بخط عريض مثلًا) يرفع سقف السطر
+    كله فوق المتن، فيدخل في النطاق تسطيرُ السطر السابق — وهو خط ممتد يعبر
+    كل الفجوات، فتُحذف مسافات الكلمات في السطر بأكمله.
+
     القياس الفعلي: المسافة الحقيقية <= ٢٪ حبر، والوهمية ٩–٢١٪.
     فالعتبة INK_MAX = ٦٪ تفصل بينهما بهامش واسع من الجهتين.
     """
@@ -236,7 +312,9 @@ def _inked(right, left, ink, z, y0, y1):
     if px1 <= px0:                        # فجوة أضيق من أن تُقلَّص
         px0, px1 = int(gx0 * z), int(gx1 * z)
 
-    py0, py1 = int(y0 * z), int(y1 * z)
+    pair_y0 = min(right.y0, left.y0)
+    pair_y1 = pair_y0 + (max(right.y1, left.y1) - pair_y0) * INK_BAND
+    py0, py1 = int(max(y0, pair_y0) * z), int(min(y1, pair_y1) * z)
     if py1 <= py0 or px1 <= px0:
         return False
 
@@ -512,7 +590,7 @@ def tidy(s):
 # ═══════════════ الواجهة العامة ═══════════════
 
 def page_lines(page, stats=None, unify_digits=True, check_ink=True,
-               fix_ligatures=True):
+               fix_ligatures=True, drop_watermark=True):
     """
     يرجّع أسطر صفحة واحدة: قائمة قواميس فيها
     text / x0 / x1 / y0 / y1 / size / bold / row.
@@ -520,7 +598,8 @@ def page_lines(page, stats=None, unify_digits=True, check_ink=True,
     stats قاموس اختياري يُجمَّع فيه عدد الرباطات المُصلَحة وأنواعها.
     """
     ink, z = ink_map(page) if check_ink else (None, 1.0)
-    lines = build_lines(page_units(page, stats, fix_ligatures), ink, z)
+    lines = build_lines(
+        page_units(page, stats, fix_ligatures, drop_watermark), ink, z)
     if unify_digits:
         for line in lines:
             line["text"] = line["text"].translate(AR2WEST)

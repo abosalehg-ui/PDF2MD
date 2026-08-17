@@ -66,6 +66,28 @@ def test_touching_glyphs_count_as_same_word():
     assert core._inked(right, left, blank_ink(), 1.0, 0, 10)
 
 
+def test_underline_above_the_pair_ignored():
+    """
+    نطاق السطر يبدأ من أعلى وحدة فيه، فحرف واحد مرفوع يرفع سقفه فوق المتن
+    فيدخل فيه تسطير السطر السابق — خط ممتد يعبر كل الفجوات. النطاق مقصور
+    على امتداد الحرفين، فيبقى التسطير خارجه وتبقى المسافة.
+    """
+    ink = blank_ink()
+    ink[0:2, :] = True                      # تسطير السطر السابق
+    right, left = unit("ي", 100, 110, y0=4, y1=14), unit("ب", 80, 90, y0=4,
+                                                         y1=14)
+    assert not core._inked(right, left, ink, 1.0, 0, 14)
+
+
+def test_ink_between_the_pair_still_detected():
+    """القصر على امتداد الحرفين لا يعطّل الفحص داخل نطاقهما."""
+    ink = blank_ink()
+    ink[4:12, 88:102] = True
+    right, left = unit("ي", 100, 110, y0=4, y1=14), unit("ب", 80, 90, y0=4,
+                                                         y1=14)
+    assert core._inked(right, left, ink, 1.0, 0, 14)
+
+
 def test_operands_swapped_when_order_reversed():
     """الدالة تضمن أن right هو الأيمن فعلًا مهما كان ترتيب التمرير."""
     ink = blank_ink()

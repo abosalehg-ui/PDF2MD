@@ -52,6 +52,8 @@ def build_parser():
                    help="إبقاء الأرقام الهندية كما هي")
     p.add_argument("--keep-headers", action="store_true",
                    help="إبقاء الترويسة والتذييل المتكررة")
+    p.add_argument("--keep-watermark", action="store_true",
+                   help="إبقاء نص العلامة المائية (المائل أو الباهت)")
     p.add_argument("--keep-toc", action="store_true",
                    help="إبقاء صفحات الفهرس الأصلية")
     p.add_argument("--no-toc", action="store_true",
@@ -75,6 +77,7 @@ def options_from(args):
         check_ink=not args.no_ink,
         unify_digits=not args.keep_digits,
         drop_headers=not args.keep_headers,
+        drop_watermark=not args.keep_watermark,
         drop_toc=not args.keep_toc,
         footnotes=args.footnotes,
         build_toc=not args.no_toc,

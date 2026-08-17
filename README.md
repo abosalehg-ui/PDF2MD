@@ -33,13 +33,30 @@
 
 ### ١. إصلاح الرباطات المقلوبة
 
-الرباط يُرسم بجليف واحد، فيخرج حرفه الأول بعرض **صفر** لأنه ملتصق بالجليف — وترتيب الحرفين معكوس في مجرى النص.
+الرباط يُرسم بجليف واحد، فتخرج حروفه كلها عدا الأخير بعرض **صفر** لأنها ملتصقة بالجليف — وترتيبها في مجرى النص بصريّ، أي معكوس عن الترتيب المنطقي.
 
-القاعدة: أي حرف عرضه صفر وليس علامة تشكيل ← يُبدَّل مع الحرف الذي يليه مباشرة. النتيجة `chars[i+1] + chars[i]`.
+القاعدة: كل تتابع من الحروف عرضها صفر (وليست تشكيلًا) يليه حرف حامل للصندوق ← يخرج الحرف الحامل ثم حروف التتابع **معكوسة**.
 
-القاعدة عامة ولا تُقيَّد بحرف اللام، فتغطي تلقائيًّا: `لا` `لأ` `لإ` `لآ` `لم` `لح` `لج` `لخ` `تا` `با` `في` وأي رباط آخر في أي خط.
+التتابع لا يُقيَّد بحرف واحد: `الله` جليف واحد يبتلع `ه ل ل` بعرض صفر ثم الألف بالصندوق كاملًا، فالمبادلة الثنائية وحدها كانت تنتج `لهال`.
 
-### ٢. إعادة بناء السطر البصري
+القاعدة عامة ولا تُقيَّد بحرف اللام، فتغطي تلقائيًّا: `لا` `لأ` `لإ` `لآ` `لم` `لح` `لج` `لخ` `تا` `با` `في` `لله` وأي رباط آخر في أي خط.
+
+### ٢. حذف العلامة المائية
+
+التوقيع أو الختم أو شعار الجهة يُرسم فوق المتن أو خلفه بميل وشفافية، فتتقاطع إحداثياته مع أسطر المتن. وبما أن بناء الأسطر يضمّ الأجزاء حسب مركزها الرأسي، فإن جزءًا مائلًا يعبر عشرة أسطر **يُحشر داخل كل سطر يمرّ به**: النص يتقطّع، والكلمات تلتحم، وأسطر المتن القصيرة الناتجة تُقرأ عناوين. لذلك يُحذف قبل الضمّ لا بعده.
+
+الرصد بعلامتين مستقلتين — أي واحدة تكفي:
+
+| العلامة | القاعدة | لماذا |
+|---|---|---|
+| الشفافية | `alpha < 60%` | المتن يُطبع معتمًا، فالباهت طبقة زخرفية لا محتوى |
+| الميل | انحراف اتجاه السطر عن الأفق `> 0.08` | المتن أفقي، والمائل ختم أو توقيع |
+
+**حارس الميل:** لو كانت كل أسطر الصفحة مائلة فالصفحة نفسها مائلة (مسح ضوئي مائل أو صفحة عرضية بلا `/Rotate`)، فلا يُحذف شيء — الميل يميّز العلامة عن المتن فقط حين يوجد متن أفقي تُقارن به.
+
+يُعطَّل بـ `--keep-watermark`.
+
+### ٣. إعادة بناء السطر البصري
 
 `PyMuPDF` يقسّم السطر الواحد عند كل تغيّر اتجاه، فينتج:
 
@@ -60,11 +77,13 @@
 
 اتجاه السطر: إن كان فيه حرف عربي رُتّب تنازليًّا حسب `x1`، وإلا تصاعديًّا حسب `x0`.
 
-### ٣. فحص الحبر — كشف المسافات الوهمية
+### ٤. فحص الحبر — كشف المسافات الوهمية
 
 بعض المسافات موجودة في مجرى النص لكنها **لا تُرسم**، لأن الحرف مرسوم فوق موضعها — فتخرج `يقتض ي` و`الأ صلي` و`المرسو م`.
 
-تُرسم الصفحة بدقّة ١٥٠ نقطة/بوصة رماديًّا، ويُعدّ البكسل الأغمق من ١٢٨ حبرًا. ولكل مسافة مرشّحة بين حرفين عربيين تُؤخذ المنطقة بين `x1` للحرف الأيسر و`x0` للحرف الأيمن، وتُقلَّص ٣٠٪ من كل جهة، ويُحدّ نطاقها الرأسي بأعلى ٧٨٪ من السطر (تجاهلًا للذيول والتسطير).
+تُرسم الصفحة بدقّة ١٥٠ نقطة/بوصة رماديًّا، ويُعدّ البكسل الأغمق من ١٢٨ حبرًا. ولكل مسافة مرشّحة بين حرفين عربيين تُؤخذ المنطقة بين `x1` للحرف الأيسر و`x0` للحرف الأيمن، وتُقلَّص ٣٠٪ من كل جهة، ويُحدّ نطاقها الرأسي بأعلى ٧٨٪ من السطر (تجاهلًا للذيول والتسطير)، ثم يُقصر على امتداد الحرفين نفسيهما.
+
+القصر على امتداد الحرفين ضروري: نطاق السطر يبدأ من أعلى وحدة فيه، فحرفٌ واحد مرفوع (بداية فقرة بخط عريض مثلًا) يرفع سقف السطر كله فوق المتن، فيدخل في النطاق **تسطير السطر السابق** — وهو خط ممتد يعبر كل الفجوات، فتُحذف مسافات الكلمات في السطر بأكمله وتخرج `فيما يتعلقبدفعوكيلالمدعى عليها`.
 
 القياس الفعلي:
 
@@ -75,13 +94,13 @@
 
 فالعتبة `0.06` تفصل بينهما بهامش واسع من الجهتين. (هذا الخيار يُبطئ المعالجة نحو ٣×، ويمكن تعطيله.)
 
-### ٤. المسافات من الفجوات
+### ٥. المسافات من الفجوات
 
 العتبة: `الفجوة ÷ حجم الخط > 0.13`. (توزيع مقيس على ٢٨ ألف فجوة: داخل الكلمة < `0.02` بنسبة ٨١٪، وبين الكلمات ≥ `0.13`.)
 
 المسافات المستنبطة من الفجوات تمرّ هي أيضًا على فحص الحبر، وإلا أعادت قاعدة الفجوة إدراج المسافة الوهمية بعد حذفها.
 
-### ٥. ترتيب الأرقام والتواريخ
+### ٦. ترتيب الأرقام والتواريخ
 
 الأرقام تُكتب من اليسار لليمين داخل نص RTL، فتخرج معكوسة بعد الترتيب البصري. تُكتشف التسلسلات الرقمية/اللاتينية وتُعكس لتعود لترتيبها المنطقي:
 
@@ -90,21 +109,22 @@
 - أي مسافة محصورة بين رقمين أو فواصل عددية تُسقط، لأنها تكسر التاريخ فيخرج `6/5/1436` بدل `1436/6/5`.
 - الوحدات داخل التسلسل المعكوس تُعلَّم `glue` حتى لا تعيد قاعدة الفجوة إدراج مسافة داخل العدد.
 
-### ٦. التشكيل الطائر
+### ٧. التشكيل الطائر
 
 علامات التشكيل تُصدَّر منفصلة وقد **تسبق** حرفها في المجرى. تُربط كل علامة بالحرف العربي الذي يحتوي موقعها إحداثيًّا (أقرب حرف عربي لمركز العلامة). بدون ذلك تخرج `يوما.ً` بدل `يوماً.`
 
-### ٧. تنظيف نهائي
+### ٨. تنظيف نهائي
 
 حذف رموز التحكم الاتجاهي (`200E` `200F` `202A-202E` `2066-2069` `00AD` `FEFF`)، وتطبيع `NFC`، وإزالة المسافة بعد فتح القوس وقبل إغلاقه وقبل علامات الترقيم، وتوحيد الشرطة المائلة بين رقمين، وتحويل `1442 هـ` إلى `1442هـ`.
 
-### ٨. البنية
+### ٩. البنية
 
 - **العناوين** — بحجم الخط مقارنًا بحجم المتن الغالب، أو بأنماط `الباب / الفصل / المادة` في نمط الأنظمة السعودية
 - **الفقرات** — تُلَمّ الأسطر المكسورة في فقرة واحدة بالاعتماد على الفجوة الرأسية (`> 0.75 ×` ارتفاع السطر يبدأ فقرة)
 - **البنود المرقّمة** — `1-` و`3/1-` تُحفظ بترقيمها الأصلي دون إعادة ترقيم
 - **الحواشي** — تُلتقط بحجم الخط الأصغر في النصف السفلي، وتُؤجَّل حتى نهاية القسم لئلا تقطع الفقرات
 - **الترويسة والتذييل** — تُرصدان بتكرارهما عبر الصفحات وتُحذفان
+- **العلامة المائية** — توقيع أو ختم أو شعار جهة، تُرصد بالشفافية أو بالميل وتُحذف قبل ضمّ الأسطر (القسم ٢ أعلاه)
 - **الفهرس الأصلي** — يُتخطّى، ويُولَّد بدلًا منه فهرس بروابط داخلية (المراسي مصغَّرة الحروف ومفضوضة التعارض، فالعناوين المتكررة لا تشترك في مرساة واحدة)
 - **الجداول** — صفوف الجدول المرصودة هندسيًا (أربعة أجزاء فأكثر تفصلها فجوات أوسع من `CELL_GAP`) تُجمَّع في جدول Markdown حقيقي؛ صفّان متتاليان على الأقل، والصف المعزول يبقى فقرة
 
@@ -170,6 +190,9 @@ python main.py كتاب.pdf --force
 # تعطيل بناء الجداول — صفوف الجداول تخرج فقرات
 python main.py تقرير.pdf --no-tables -o تقرير.md
 
+# إبقاء نص العلامة المائية (التوقيع أو الختم) بدل حذفه
+python main.py مذكرة.pdf --keep-watermark -o مذكرة.md
+
 # كل الخيارات
 python main.py --help
 ```
@@ -212,6 +235,8 @@ python main.py --help
 | `Y_TOL` | `0.55` | تسامح رأسي لتجميع السطر البصري |
 | `CELL_GAP` | `6.0` | فجوة أفقية تفصل خلايا الجدول |
 | `INK_DPI` | `150` | دقة رسم الصفحة لفحص الحبر |
+| `WM_ALPHA` | `0.60` | شفافية دونها يُعدّ النص علامة مائية |
+| `WM_TILT` | `0.08` | انحراف اتجاه السطر عن الأفق يُعدّ ميلًا |
 
 عدِّلها إن واجهت ملفًا بخصائص مختلفة جذريًّا.
 
@@ -327,21 +352,23 @@ Arabic PDFs exported from Word and then processed through macOS/iOS (the Quartz 
 
 No dictionary, no guessing. Every fix is a geometric rule derived from glyph coordinates and from the rendered pixels of the page.
 
-1. **Reversed ligatures** — the first glyph of a ligature pair is exported with **zero width** and the pair is stored backwards. Any zero-width glyph that is not a diacritic is swapped with the glyph that follows it, yielding `chars[i+1] + chars[i]`. The rule is general — it is not tied to the letter *lam* — so it covers `لا` `لأ` `لإ` `لآ` `لم` `لح` `لج` `لخ` `تا` `با` `في` and any other ligature in any font.
+1. **Reversed ligatures** — every glyph of a ligature except the last is exported with **zero width**, and the run is stored in visual (reversed) order. Each run of zero-width non-diacritic glyphs followed by a box-carrying glyph is emitted as the carrier followed by the run **reversed**. Runs are not limited to one glyph: `الله` is a single glyph swallowing `ه ل ل` at zero width plus the alef carrying the box, so pairwise swapping alone produced `لهال`. The rule is general — it is not tied to the letter *lam* — so it covers `لا` `لأ` `لإ` `لآ` `لم` `لح` `لج` `لخ` `تا` `با` `في` `لله` and any other ligature in any font.
 
-2. **Visual line reconstruction** — PyMuPDF splits a line at every direction change. Fragments are merged into one visual line when **both** hold: vertical proximity (`y`-centre delta ≤ `0.55 ×` max height) **and** no horizontal overlap (< 50% of the narrower width). The overlap test runs against **each fragment individually**, not the combined box — otherwise numbers sitting between two Arabic fragments get rejected. Line direction: descending by `x1` if any Arabic letter is present, ascending by `x0` otherwise.
+2. **Watermark removal** — a signature, stamp, or agency logo is painted over or under the body at an angle and with transparency, so its coordinates intersect body lines. Because line building groups fragments by vertical centre, one tilted fragment crossing ten lines is spliced into every line it passes through: text fractures, words fuse, and the resulting short body lines read as headings — so it is dropped before grouping, not after. Two independent signals, either one is enough: transparency (`alpha < 60%` — body text is printed opaque, so faint text is decoration) and tilt (line direction deviating from horizontal by `> 0.08` — body text is horizontal). Tilt guard: if *every* line on the page is tilted, the page itself is tilted (a skewed scan, or a landscape page with no `/Rotate`) and nothing is dropped. Disable with `--keep-watermark`.
 
-3. **Ink probe — phantom spaces** — some spaces exist in the text stream but are never painted, because a glyph is drawn over them, producing `يقتض ي` / `الأ صلي` / `المرسو م`. The page is rasterised at 150 DPI greyscale (pixel < 128 = ink). For each candidate space between two Arabic glyphs, the region between the left glyph's `x1` and the right glyph's `x0` is shrunk 30% on each side and clipped to the top 78% of the line (ignoring descenders and underlines). Measured in practice: real spaces ≤ 2% ink, phantom spaces 9–21% — the `0.06` threshold separates them with wide margin on both sides.
+3. **Visual line reconstruction** — PyMuPDF splits a line at every direction change. Fragments are merged into one visual line when **both** hold: vertical proximity (`y`-centre delta ≤ `0.55 ×` max height) **and** no horizontal overlap (< 50% of the narrower width). The overlap test runs against **each fragment individually**, not the combined box — otherwise numbers sitting between two Arabic fragments get rejected. Line direction: descending by `x1` if any Arabic letter is present, ascending by `x0` otherwise.
 
-4. **Gap-inferred spaces** — threshold `gap ÷ font size > 0.13`, from a distribution measured over 28,000 gaps (81% of intra-word gaps < `0.02`; inter-word gaps ≥ `0.13`). Gap-inferred spaces are passed through the ink probe too, otherwise the gap rule re-inserts the phantom space the probe just removed.
+4. **Ink probe — phantom spaces** — some spaces exist in the text stream but are never painted, because a glyph is drawn over them, producing `يقتض ي` / `الأ صلي` / `المرسو م`. The page is rasterised at 150 DPI greyscale (pixel < 128 = ink). For each candidate space between two Arabic glyphs, the region between the left glyph's `x1` and the right glyph's `x0` is shrunk 30% on each side, clipped to the top 78% of the line (ignoring descenders and underlines), and then narrowed to the vertical extent of the two glyphs themselves. That last clip matters: the line band starts at the topmost unit in the line, so a single raised glyph (a bold paragraph opener, say) lifts the band above the body and pulls in **the previous line's underline** — a continuous rule crossing every gap, which deletes the word spaces of the entire line. Measured in practice: real spaces ≤ 2% ink, phantom spaces 9–21% — the `0.06` threshold separates them with wide margin on both sides.
 
-5. **Number ordering** — digits are LTR inside RTL text, so they come out reversed after visual sorting. Each numeric/Latin run is reversed back. Arabic-Indic `٠-٩` and Extended `۰-۹` digits count as strong LTR just like `0-9`, since they appear mixed within a single number. Numeric separators `/ . , : -` between two digits join the same run. Any space trapped between digits or numeric separators is dropped — it would otherwise break a date into `6/5/1436` instead of `1436/6/5`. Units inside a reversed run are marked *glue* so the gap rule cannot re-insert a space inside the number.
+5. **Gap-inferred spaces** — threshold `gap ÷ font size > 0.13`, from a distribution measured over 28,000 gaps (81% of intra-word gaps < `0.02`; inter-word gaps ≥ `0.13`). Gap-inferred spaces are passed through the ink probe too, otherwise the gap rule re-inserts the phantom space the probe just removed.
 
-6. **Floating diacritics** — diacritics are exported as separate units and may **precede** their base letter in the stream. Each mark is bound to the Arabic letter that geometrically contains its position (nearest Arabic letter to the mark's centre), not to the previous letter in the stream. Without this you get `يوما.ً` instead of `يوماً.`
+6. **Number ordering** — digits are LTR inside RTL text, so they come out reversed after visual sorting. Each numeric/Latin run is reversed back. Arabic-Indic `٠-٩` and Extended `۰-۹` digits count as strong LTR just like `0-9`, since they appear mixed within a single number. Numeric separators `/ . , : -` between two digits join the same run. Any space trapped between digits or numeric separators is dropped — it would otherwise break a date into `6/5/1436` instead of `1436/6/5`. Units inside a reversed run are marked *glue* so the gap rule cannot re-insert a space inside the number.
 
-7. **Final cleanup** — strip bidi control characters (`200E` `200F` `202A-202E` `2066-2069` `00AD` `FEFF`), apply `NFC`, remove spaces after opening and before closing brackets and before punctuation, normalise the slash between digits, and join `1442 هـ` into `1442هـ`.
+7. **Floating diacritics** — diacritics are exported as separate units and may **precede** their base letter in the stream. Each mark is bound to the Arabic letter that geometrically contains its position (nearest Arabic letter to the mark's centre), not to the previous letter in the stream. Without this you get `يوما.ً` instead of `يوماً.`
 
-8. **Structure** — headings by font size **and heading shape** (a line ending in a full stop is never a heading, however large its font — without that guard a page dense with small text inverts and its body becomes headings), or `الباب / الفصل / المادة` patterns in the Saudi-law profile; broken lines reflowed into paragraphs by vertical gap; numbered items kept with their original numbering; detected table rows assembled into real Markdown tables; footnotes captured by smaller font size in the lower half and deferred to the end of the section; repeated headers/footers detected by recurrence across pages and dropped; the original table of contents skipped and replaced by a generated one with lowercased, collision-resolved anchors.
+8. **Final cleanup** — strip bidi control characters (`200E` `200F` `202A-202E` `2066-2069` `00AD` `FEFF`), apply `NFC`, remove spaces after opening and before closing brackets and before punctuation, normalise the slash between digits, and join `1442 هـ` into `1442هـ`.
+
+9. **Structure** — headings by font size **and heading shape** (a line ending in a full stop is never a heading, however large its font — without that guard a page dense with small text inverts and its body becomes headings), or `الباب / الفصل / المادة` patterns in the Saudi-law profile; broken lines reflowed into paragraphs by vertical gap; numbered items kept with their original numbering; detected table rows assembled into real Markdown tables; footnotes captured by smaller font size in the lower half and deferred to the end of the section; repeated headers/footers detected by recurrence across pages and dropped; watermarks dropped by transparency or tilt; the original table of contents skipped and replaced by a generated one with lowercased, collision-resolved anchors.
 
 ## Install & run
 
@@ -369,6 +396,8 @@ Located in `src/core.py`:
 | `Y_TOL` | `0.55` | vertical tolerance for visual line grouping |
 | `CELL_GAP` | `6.0` | horizontal gap separating table cells |
 | `INK_DPI` | `150` | rasterisation DPI for the ink probe |
+| `WM_ALPHA` | `0.60` | opacity below which text counts as a watermark |
+| `WM_TILT` | `0.08` | line-direction deviation from horizontal that counts as tilted |
 
 ## Known limits
 
