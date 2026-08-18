@@ -27,12 +27,13 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("pdf", nargs="+", help="ملف PDF واحد أو أكثر")
-    p.add_argument("-o", "--out", help="ملف المخرج أو مجلده")
+    p.add_argument("-o", "--out",
+                   help="مسار ينتهي بـ.md يُعدّ ملفًا، وما عداه يُعدّ مجلدًا")
     p.add_argument("--profile", default="auto",
                    choices=["auto", "saudi_law", "plain"],
                    help="نمط المستند (الافتراضي: auto)")
     p.add_argument("--title", default="", help="العنوان الرئيسي في أول الملف")
-    p.add_argument("--pages", help="نطاق الصفحات، مثل 10-40")
+    p.add_argument("--pages", help="نطاق الصفحات، مثل 10-40 أو صفحة واحدة: 12")
     p.add_argument("--footnotes", default="quote",
                    choices=["quote", "inline", "drop"],
                    help="معالجة الحواشي (الافتراضي: quote)")
@@ -88,10 +89,13 @@ def options_from(args):
         para_gap=args.para_gap,
     )
     if args.pages:
-        m = re.match(r"^\s*(\d+)\s*-\s*(\d+)\s*$", args.pages)
+        # الصفحة الواحدة تُكتب رقمًا مجردًا: `--pages 12`. بلا الجزء
+        # الاختياري كان أشيع استعمال يتطلب `12-12`.
+        m = re.match(r"^\s*(\d+)\s*(?:-\s*(\d+)\s*)?$", args.pages)
         if not m:
-            sys.exit("صيغة النطاق غير صحيحة — المتوقّع مثل: 10-40")
-        opt.page_from, opt.page_to = int(m.group(1)), int(m.group(2))
+            sys.exit("صيغة النطاق غير صحيحة — المتوقّع مثل: 10-40 أو 12")
+        opt.page_from = int(m.group(1))
+        opt.page_to = int(m.group(2)) if m.group(2) else opt.page_from
         if opt.page_to < opt.page_from:
             sys.exit("نهاية النطاق أصغر من بدايته.")
     return opt

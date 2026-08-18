@@ -254,3 +254,82 @@ def test_ensure_parent_creates_folder(tmp_path):
     target = tmp_path / "عميق" / "أعمق" / "ملف.md"
     common.ensure_parent(str(target))
     assert target.parent.is_dir()
+
+
+# ═══════════ الحكم عند ازدياد التلف ═══════════
+
+def test_verdict_reports_no_improvement_when_damage_grows():
+    """
+    «أُصلح أغلب التلف» ادّعاء لا يصحّ إلا إذا نقص العدد. كان الحكم يجزم
+    بالإصلاح حتى حين يزيد التلف بعد المعالجة.
+    """
+    worse = [{"before_bad": 2, "after_bad": 5}]
+    text, ok = common.verdict_of(worse)
+    assert ok is False
+    assert "لم يتحسّن" in text
+    assert "أغلب" not in text
+
+
+def test_verdict_no_improvement_when_damage_unchanged():
+    same = [{"before_bad": 3, "after_bad": 3}]
+    text, ok = common.verdict_of(same)
+    assert ok is False and "لم يتحسّن" in text
+
+
+# ═══════════ قاعدة -o: الامتداد يحسم لا الوجود ═══════════
+
+def test_out_path_treats_extensionless_path_as_a_folder(tmp_path):
+    """
+    كان `-o out` مع ملف واحد يُنتج ملفًا بلا امتداد اسمه out، ومع ملفين
+    يُنتج مجلدًا بالاسم نفسه — فيتغيّر معنى الخيار بعدد ملفات الدخل.
+    """
+    pdf = str(tmp_path / "كتاب.pdf")
+    folder = str(tmp_path / "مخرجات")            # غير موجود وبلا امتداد
+    single = common.out_path_for(pdf, folder, many=False)
+    batch = common.out_path_for(pdf, folder, many=True)
+    assert single == batch                       # المعنى واحد في الحالتين
+    assert single.endswith("كتاب.md")
+
+
+def test_out_path_named_md_file_is_honoured_for_single_input(tmp_path):
+    target = str(tmp_path / "مخرج.md")
+    assert common.out_path_for(str(tmp_path / "ك.pdf"), target,
+                               many=False) == target
+
+
+def test_out_path_named_md_becomes_folder_for_a_batch(tmp_path):
+    """في الدفعة لا يصلح مسار واحد ملفًا مهما كان امتداده."""
+    target = str(tmp_path / "مخرج.md")
+    got = common.out_path_for(str(tmp_path / "ك.pdf"), target, many=True)
+    assert got.startswith(target) and got.endswith("ك.md")
+
+
+# ═══════════ تجاوز نهاية النطاق يُقصّ ويُقال ═══════════
+
+def test_page_to_beyond_document_warns(tmp_path):
+    """القصّ الصامت كان يترك من طلب 2-999 يظن أنه استلم ٩٩٨ صفحة."""
+    pdf = make_pdf(tmp_path / "d.pdf", [BODY, BODY, BODY])
+    said = []
+    md, st = convert(pdf, Options(page_from=2, page_to=999, check_ink=False),
+                     log=said.append)
+    assert st["pages"] == 2
+    assert any("تتجاوز عدد صفحات الملف" in m for m in said)
+
+
+def test_page_to_within_document_is_silent(tmp_path):
+    pdf = make_pdf(tmp_path / "d.pdf", [BODY, BODY, BODY])
+    said = []
+    convert(pdf, Options(page_from=1, page_to=3, check_ink=False),
+            log=said.append)
+    assert not any("تتجاوز" in m for m in said)
+
+
+# ═══════════ تحذير المستند الضخم ═══════════
+
+def test_big_document_warns_once(tmp_path, monkeypatch):
+    """التحذير مبني على عدد صفحات المدى، فيُختبر بخفض العتبة لا ببناء ٢٠٠٠."""
+    monkeypatch.setattr("src.structure.BIG_DOC_PAGES", 2)
+    pdf = make_pdf(tmp_path / "big.pdf", [BODY, BODY, BODY])
+    said = []
+    convert(pdf, Options(check_ink=False), log=said.append)
+    assert sum("مستند ضخم" in m for m in said) == 1

@@ -99,3 +99,46 @@ def test_no_watermark_leaves_stats_untouched():
     stats = {}
     text_of(page([line([span("متن")])]), stats=stats)
     assert "watermark" not in stats
+
+
+# ═══════════ الرصد باللون (الختم الرمادي المعتم) ═══════════
+
+def gray(value):
+    """يرزم رماديًا موحّدًا في عدد sRGB مثل ما يخرجه rawdict."""
+    return (value << 16) | (value << 8) | value
+
+
+def test_opaque_gray_stamp_dropped():
+    """
+    أختام «صورة طبق الأصل» تُرسم رماديًا معتمًا لا شفافًا، فلا يمسكها alpha.
+    وهي تنجو كبيرة الخط فتُصنَّف عنوانًا وتدخل الفهرس — فاللون علامة ثالثة.
+    """
+    body = span("متن")
+    stamp = span("ختم", x0=300.0, size=30.0)
+    stamp["color"] = gray(204)                      # #CCC — لمعان 0.80
+    out = text_of(page([line([body, stamp])]))
+    assert "ختم" not in out
+    assert "متن" in out
+
+
+def test_black_body_survives_color_probe():
+    """اللون الأسود لمعانه صفر — المتن لا يُمسّ."""
+    body = span("متن")
+    body["color"] = gray(0)
+    assert "متن" in text_of(page([line([body])]))
+
+
+def test_mid_gray_is_not_a_watermark():
+    """الرمادي المتوسط #808080 لمعانه 0.50 — دون العتبة فلا يُحذف."""
+    body = span("متن")
+    body["color"] = gray(128)
+    assert "متن" in text_of(page([line([body])]))
+
+
+def test_color_probe_survives_missing_or_odd_field():
+    """غياب color أو نوعه غير المتوقّع لا يُسقط الجزء ولا يرمي استثناءً."""
+    plain = span("متن")                              # بلا مفتاح color أصلًا
+    assert "متن" in text_of(page([line([plain])]))
+    odd = span("نص", x0=300.0)
+    odd["color"] = None
+    assert "نص" in text_of(page([line([odd])]))

@@ -25,7 +25,14 @@ if [ -z "$PY" ]; then
 fi
 
 # ── تثبيت المتطلبات عند الحاجة ──
-if ! "$PY" -c 'import fitz, numpy, PyQt6' >/dev/null 2>&1; then
+# الفحص بالاسم الجديد `pymupdf` مع سقوط إلى `fitz` — مثل core.py تمامًا.
+# لو بقي الفحص على `fitz` وحده لأعاد التثبيت في *كل* تشغيل بعد إزالة الاسم
+# المهجور، والمكتبة مثبّتة سليمة.
+if ! "$PY" -c 'import numpy, PyQt6
+try:
+    import pymupdf
+except ImportError:
+    import fitz' >/dev/null 2>&1; then
     echo "المتطلبات ناقصة — جارٍ تثبيتها من requirements.txt ..."
     if ! "$PY" -m pip install -r "$DIR/requirements.txt"; then
         echo "فشل التثبيت العام — إعادة المحاولة على مستوى المستخدم ..." >&2

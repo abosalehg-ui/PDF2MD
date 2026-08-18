@@ -20,6 +20,11 @@ def verdict_of(rows):
     if after_bad == 0:
         return (f"رُصد تلف في الرباطات وأُصلح بالكامل "
                 f"({before_bad} حالة في العيّنة)."), True
+    # «أُصلح أغلب التلف» ادّعاء لا يصحّ إلا إذا نقص العدد فعلًا. بلا هذا
+    # الفرع كان الحكم يجزم بالإصلاح حتى حين يزيد التلف بعد المعالجة.
+    if after_bad >= before_bad:
+        return (f"لم يتحسّن الملف — التلف {after_bad} حالة بعد المعالجة مقابل "
+                f"{before_bad} قبلها. راجع الإعدادات أو أبلغ عن الملف."), False
     return f"أُصلح أغلب التلف، وبقي {after_bad} حالة تحتاج فحصًا يدويًا.", False
 
 
@@ -27,12 +32,18 @@ def out_path_for(pdf, out, many):
     """
     يحدّد مسار المخرَج: ملف واحد صريح، أو مجلد، أو بجانب ملف PDF.
 
+    القاعدة: المسار المنتهي بـ`.md` ملفٌ، وما عداه مجلد. والحكم بالامتداد
+    لا بوجود المسار على القرص، لأن الحكم بالوجود كان يقلب المعنى: `-o out`
+    مع ملف واحد يُنتج **ملفًا بلا امتداد** اسمه `out`، ومع ملفين يُنتج
+    **مجلدًا** بالاسم نفسه — فيتغيّر معنى الخيار بتغيّر عدد ملفات الدخل.
+
     حسابية بحتة بلا أي أثر على القرص — كانت تنشئ المجلد بنفسها، فكانت
     الواجهة تُنشئ مجلدات لمجرد فحص وجود ملفات المخرَج قبل موافقة المستخدم،
     وكان فشل الإنشاء يُرفع داخل slot في Qt فيُنهي التطبيق. إنشاء المجلد
     مسؤولية موضع الكتابة الفعلي: ensure_parent().
     """
-    if out and not many and not os.path.isdir(out) and not out.endswith(os.sep):
+    named_file = bool(out) and os.path.splitext(out)[1].lower() == ".md"
+    if out and not many and not os.path.isdir(out) and named_file:
         return out
     folder = out if out else (os.path.dirname(os.path.abspath(pdf)))
     return os.path.join(folder, os.path.splitext(os.path.basename(pdf))[0] + ".md")
