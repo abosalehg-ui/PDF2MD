@@ -77,6 +77,7 @@ NOTE_ZONE = 0.45        # الحواشي لا تُلتقط إلا في النص�
 NOTE_SMALLER = 2.0      # الحاشية أصغر من المتن بهذا المقدار على الأقل
 INDENT_TOL = 40         # إزاحة أفقية تدل على بداية فقرة جديدة
 LINE_WEIGHT_CAP = 80    # سقف مساهمة السطر الواحد في ترجيح حجم المتن
+BIG_DOC_PAGES = 2000    # فوقه يُحذَّر المستخدم قبل انتظار طويل بلا تقدير
 
 
 # ═══════════════════════ المُجمِّع ═══════════════════════
@@ -90,6 +91,8 @@ class Builder:
         self.buf = []       # أسطر الفقرة الجارية
         self.toc = []       # (المستوى، النص) لتوليد الفهرس
         self.notes = []     # حواشي مؤجَّلة حتى نهاية القسم
+        self.rows = []      # صفوف جدول متتالية بانتظار الإغلاق
+        self.tables = 0     # عدد الجداول المبنية
 
     def flush(self):
         """يُنهي الفقرة الجارية بلمّ أسطرها في سطر واحد."""
@@ -135,6 +138,27 @@ class Builder:
         for row in norm[1:]:
             self.out.append("| " + " | ".join(row) + " |")
         self.out.append("")
+
+    def row(self, line):
+        """يراكم صف جدول حتى ينقطع التتابع."""
+        self.rows.append(line)
+
+    def close_table(self):
+        """
+        يفرغ الصفوف المتراكمة: صفّان فأكثر جدول، والصف الواحد فقرة.
+
+        كانت إغلاقًا داخل convert() يعدّل متغيّرين من نطاقها الخارجي —
+        وهي حالة يملكها المُجمِّع لا المحوِّل، فبقاؤها هنا يجعل استدعاءها
+        من أي موضع آمنًا بلا تمرير سياق.
+        """
+        if not self.rows:
+            return
+        if len(self.rows) >= 2:
+            self.table([r["cells"] for r in self.rows])
+            self.tables += 1
+        else:
+            self.para(self.rows[0]["text"], True)
+        self.rows.clear()
 
 
 # ═══════════════════════ التصنيف ═══════════════════════
@@ -266,6 +290,199 @@ def anchor_of(text, seen=None):
 
 # ═══════════════════════ التحويل ═══════════════════════
 
+def _page_range(doc, opt, say):
+    """
+    يحدّد (lo, hi) بفهرسة صفرية من نطاق Options، ويشرح كل انحراف عنه.
+
+    التجاوز يُقصّ ولا يُبتلع بصمت: من طلب `--pages 2-999` على ملف من ثلاث
+    صفحات يستحق أن يعرف أنه استلم ثلاثًا لا ٩٩٨. أما تجاوز **البداية**
+    فخطأ صريح لا قصّ، لأن السقوط منه إلى «الملف كله» يسلّم من طلب
+    الصفحات ٥٠٠–٦٠٠ كتابًا كاملًا وهو يظنّه الجزء المطلوب.
+    """
+    n = len(doc)
+    if opt.page_from and opt.page_from > n:
+        raise ValueError(
+            f"بداية النطاق ({opt.page_from}) تتجاوز عدد صفحات الملف ({n}).")
+
+    lo = max(0, (opt.page_from or 1) - 1)
+    hi = min(n - 1, (opt.page_to or n) - 1)
+    if hi < lo:
+        hi = n - 1
+        say(f"⚠ نهاية النطاق ({opt.page_to}) أصغر من بدايته "
+            f"({opt.page_from}) — حُوّل الملف من الصفحة {lo + 1} إلى نهايته.")
+    elif opt.page_to and opt.page_to > n:
+        say(f"⚠ نهاية النطاق ({opt.page_to}) تتجاوز عدد صفحات الملف ({n}) — "
+            f"حُوّل حتى الصفحة {n}.")
+    return lo, hi
+
+
+def _extract_pages(doc, opt, lo, hi, st, say, tick, cancel):
+    """
+    يستخرج أسطر كل صفحة في المدى، ويرجّع [(فهرس الصفحة، الأسطر، الارتفاع)].
+
+    الأسطر تُحمَّل كاملة قبل البناء لأن حجم المتن الغالب والترويسات
+    المتكررة لا يُحسبان إلا على المستند كله — وهذا حدّ موثّق في README.
+    """
+    total = hi - lo + 1
+    if total >= BIG_DOC_PAGES:
+        say(f"⚠ مستند ضخم: {total:,} صفحة — المعالجة قد تطول والذاكرة "
+            f"المطلوبة تنمو مع عدد الصفحات. لتحويل جزء استعمل نطاق "
+            f"الصفحات، وللتسريع ٣× عطّل فحص الحبر.")
+
+    pages = []
+    for k, i in enumerate(range(lo, hi + 1)):
+        if cancel is not None and cancel.is_set():
+            raise ConversionCancelled("أُلغي التحويل.")
+        page = doc[i]
+        lines = core.page_lines(page, st,
+                                unify_digits=opt.unify_digits,
+                                check_ink=opt.check_ink,
+                                fix_ligatures=opt.fix_ligatures,
+                                drop_watermark=opt.drop_watermark)
+        pages.append((i, lines, page.rect.height))
+        if k % 5 == 0 or k == total - 1:
+            tick(int(70 * (k + 1) / total), f"استخراج ص {i + 1} / {hi + 1}")
+    return pages
+
+
+def _is_table_row(line, opt):
+    """صف جدول صالح للبناء: مرصود هندسيًا وله خليتان فأكثر والميزة مفعّلة."""
+    return bool(opt.tables and line.get("row")
+                and len(line.get("cells", [])) >= 2)
+
+
+def _split_body_notes(lines, opt, height, body_size, boiler):
+    """
+    يفرز أسطر صفحة إلى (متن، حواشٍ) بعد حذف الترويسة والتذييل وأرقام الصفحات.
+
+    صفوف الجداول مستثناة من الحواشي عمدًا: الجدول يُصفّ عادةً بخط أصغر من
+    المتن ويقع غالبًا في النصف السفلي، فيحقق شرطي الحاشية معًا. وبلا هذا
+    الاستثناء كان الجدول يُبتلع حاشيةً، ثم تضمّه قاعدة تكملة الحاشية إلى
+    ما قبله فتلتحم صفوفه كلها في سطر اقتباس واحد — فقدان تام لبنيته بلا
+    أي تحذير، والإحصاءات تقول «جداول ٠».
+    """
+    has_body = any(line["size"] >= body_size - 0.5 for line in lines)
+    body, notes = [], []
+
+    for line in lines:
+        t, rel = line["text"], line["y0"] / height
+        # الترويسة: المتكررة أو أي سطر صغير في منطقتها.
+        # التذييل: المتكرر (بعد تجريد الأرقام) — الحاشية نص فريد فلا تُمس.
+        if opt.drop_headers and (
+                (rel < HEADER_ZONE and (boiler_key(t) in boiler
+                                        or line["size"] < body_size - 2))
+                or (rel > FOOTER_ZONE and boiler_key(t) in boiler)):
+            continue
+        if rel > FOOTER_ZONE and RE_PAGENO.match(t):
+            continue
+        # الحاشية: أصغر خط في النصف السفلي — تُؤجَّل لنهاية القسم
+        if (has_body and not _is_table_row(line, opt)
+                and line["size"] <= body_size - NOTE_SMALLER
+                and rel > NOTE_ZONE):
+            notes.append(t)
+            continue
+        body.append(line)
+
+    return body, notes
+
+
+def _build_document(pages, opt, st, body_size, boiler, tick, cancel):
+    """يبني المُجمِّع من الصفحات المستخرَجة — العناوين والفقرات والجداول."""
+    builder = Builder(opt)
+    prev = None
+    in_laiha = False
+
+    for k, (i, lines, height) in enumerate(pages):
+        if cancel is not None and cancel.is_set():
+            raise ConversionCancelled("أُلغي التحويل.")
+        if opt.drop_toc and is_toc_page(lines, body_size):
+            st["toc_skipped"] += 1
+            continue
+
+        body, notes = _split_body_notes(lines, opt, height, body_size, boiler)
+
+        for idx, line in enumerate(body):
+            t = line["text"]
+
+            # صف جدول: يُراكَم حتى ينقطع التتابع، ثم يُبنى الجدول دفعةً
+            if _is_table_row(line, opt):
+                builder.row(line)
+                prev = line
+                continue
+            builder.close_table()
+
+            kind = classify(line, opt, body_size)
+
+            # فقرة جديدة إذا اتسعت الفجوة الرأسية عن ارتفاع السطر × para_gap
+            gap_big = False
+            if prev is not None and idx > 0:
+                lh = max(line["y1"] - line["y0"], 1.0)
+                gap_big = (line["y0"] - prev["y1"]) > lh * opt.para_gap
+
+            if kind == "top":
+                builder.head(opt.h_top, t)
+                in_laiha = False
+            elif kind == "laiha":
+                # عنوان «اللائحة التنفيذية» يقف وحده: نعلّم ما بعده فقط
+                builder.flush()
+                in_laiha = True
+            elif kind == "sub":
+                title = re.sub(r"\s*:\s*$", "", t)
+                if in_laiha and RE_MADDA_N.match(t):
+                    title = "اللائحة التنفيذية: " + title
+                    in_laiha = False
+                builder.head(opt.h_sub, title)
+            elif kind == "item":
+                # البند يُحفظ بترقيمه الأصلي كما هو، بلا إعادة ترقيم
+                builder.para(t, True)
+            elif kind == "definition":
+                m = RE_DEF.match(t)
+                builder.para(f"**{m.group(1).strip()}:** {m.group(2).strip()}",
+                             True)
+            else:
+                new_para = gap_big or (
+                    prev is not None and idx > 0
+                    and prev["text"].endswith(END_PUNCT)
+                    and line["x1"] < prev["x1"] - INDENT_TOL
+                )
+                builder.para(t, new_para or not builder.buf)
+            prev = line
+
+        builder.close_table()
+
+        # سطر الحاشية الذي لا يبدأ برقم إشارة = تكملة للحاشية السابقة
+        for note in notes:
+            if RE_FOOT.match(note) or not builder.notes:
+                builder.notes.append(note)
+                st["notes"] += 1
+            else:
+                builder.notes[-1] += " " + note
+
+        tick(70 + int(25 * (k + 1) / len(pages)), f"بناء ص {i + 1}")
+
+    builder.close_table()
+    builder.dump_notes()
+    return builder
+
+
+def _assemble(builder, opt):
+    """يركّب العنوان والفهرس ومتن المُجمِّع في نصّ Markdown واحد."""
+    head = []
+    if opt.title:
+        head += [f"# {opt.title}", ""]
+    if opt.build_toc and builder.toc:
+        head += [f"{'#' * max(2, opt.h_top)} الفهرس", ""]
+        base = min(lvl for lvl, _ in builder.toc)
+        seen = {}       # يفضّ تعارض العناوين المتكررة عبر الفهرس كله
+        for lvl, text in builder.toc:
+            head.append("  " * (lvl - base)
+                        + f"- [{text}](#{anchor_of(text, seen)})")
+        head += ["", "---", ""]
+
+    md = "\n".join(head + builder.out)
+    return re.sub(r"\n{3,}", "\n\n", md).strip() + "\n"
+
+
 def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
     """
     يحوّل ملف PDF كاملًا إلى Markdown.
@@ -283,37 +500,15 @@ def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
     try:
         if doc.needs_pass:
             raise ValueError("الملف محمي بكلمة مرور — أزل الحماية أولًا.")
-        n = len(doc)
-        # نطاق خارج المدى خطأ صريح لا يُبتلع: لو سقط بصمت إلى «الملف كله»
-        # لاستلم من طلب الصفحات ٥٠٠–٦٠٠ كتابًا كاملًا وهو يظنّه الجزء المطلوب.
-        if opt.page_from and opt.page_from > n:
-            raise ValueError(
-                f"بداية النطاق ({opt.page_from}) تتجاوز عدد صفحات الملف ({n}).")
-        lo = max(0, (opt.page_from or 1) - 1)
-        hi = min(n - 1, (opt.page_to or n) - 1)
-        if hi < lo:
-            hi = n - 1
-            say(f"⚠ نهاية النطاق ({opt.page_to}) أصغر من بدايته "
-                f"({opt.page_from}) — حُوّل الملف من الصفحة {lo + 1} إلى نهايته.")
+
+        lo, hi = _page_range(doc, opt, say)
         total = hi - lo + 1
         st = {"lig": 0, "pairs": {}, "pages": total, "toc_skipped": 0,
               "headings": 0, "notes": 0, "chars": 0, "tables": 0,
               "watermark": 0}
 
         # ── ١) الاستخراج ──
-        pages = []
-        for k, i in enumerate(range(lo, hi + 1)):
-            if cancel is not None and cancel.is_set():
-                raise ConversionCancelled("أُلغي التحويل.")
-            page = doc[i]
-            lines = core.page_lines(page, st,
-                                    unify_digits=opt.unify_digits,
-                                    check_ink=opt.check_ink,
-                                    fix_ligatures=opt.fix_ligatures,
-                                    drop_watermark=opt.drop_watermark)
-            pages.append((i, lines, page.rect.height))
-            if k % 5 == 0 or k == total - 1:
-                tick(int(70 * (k + 1) / total), f"استخراج ص {i + 1} / {hi + 1}")
+        pages = _extract_pages(doc, opt, lo, hi, st, say, tick, cancel)
         say(f"استُخرجت {total} صفحة — أُصلح {st['lig']:,} رباطًا مقلوبًا.")
         if st["watermark"]:
             say(f"حُذفت علامة مائية: {st['watermark']:,} جزء نصي مائل أو باهت.")
@@ -328,128 +523,13 @@ def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
             say(f"أسطر ترويسة متكررة سيتم حذفها: {len(boiler)}")
 
         # ── ٣) البناء ──
-        builder = Builder(opt)
-        prev = None
-        in_laiha = False
-        pending_rows = []      # صفوف جدول متتالية بانتظار الإغلاق
-
-        def close_table():
-            """يفرغ الصفوف المتراكمة: صفّان فأكثر جدول، والصف الواحد فقرة."""
-            if not pending_rows:
-                return
-            if len(pending_rows) >= 2:
-                builder.table([r["cells"] for r in pending_rows])
-                st["tables"] += 1
-            else:
-                builder.para(pending_rows[0]["text"], True)
-            pending_rows.clear()
-
-        for k, (i, lines, height) in enumerate(pages):
-            if cancel is not None and cancel.is_set():
-                raise ConversionCancelled("أُلغي التحويل.")
-            if opt.drop_toc and is_toc_page(lines, body_size):
-                st["toc_skipped"] += 1
-                continue
-
-            has_body = any(line["size"] >= body_size - 0.5 for line in lines)
-            body, notes = [], []
-
-            for line in lines:
-                t, rel = line["text"], line["y0"] / height
-                # الترويسة: المتكررة أو أي سطر صغير في منطقتها.
-                # التذييل: المتكرر (بعد تجريد الأرقام) — الحاشية نص فريد فلا تُمس.
-                if opt.drop_headers and (
-                        (rel < HEADER_ZONE and (boiler_key(t) in boiler
-                                                or line["size"] < body_size - 2))
-                        or (rel > FOOTER_ZONE and boiler_key(t) in boiler)):
-                    continue
-                if rel > FOOTER_ZONE and RE_PAGENO.match(t):
-                    continue
-                # الحاشية: أصغر خط في النصف السفلي — تُؤجَّل لنهاية القسم
-                if (has_body and line["size"] <= body_size - NOTE_SMALLER
-                        and rel > NOTE_ZONE):
-                    notes.append(t)
-                    continue
-                body.append(line)
-
-            for idx, line in enumerate(body):
-                t = line["text"]
-
-                # صف جدول: يُراكَم حتى ينقطع التتابع، ثم يُبنى الجدول دفعةً
-                if opt.tables and line.get("row") and len(line.get("cells", [])) >= 2:
-                    pending_rows.append(line)
-                    prev = line
-                    continue
-                close_table()
-
-                kind = classify(line, opt, body_size)
-
-                # فقرة جديدة إذا اتسعت الفجوة الرأسية عن ارتفاع السطر × para_gap
-                gap_big = False
-                if prev is not None and idx > 0:
-                    lh = max(line["y1"] - line["y0"], 1.0)
-                    gap_big = (line["y0"] - prev["y1"]) > lh * opt.para_gap
-
-                if kind == "top":
-                    builder.head(opt.h_top, t)
-                    in_laiha = False
-                elif kind == "laiha":
-                    # عنوان «اللائحة التنفيذية» يقف وحده: نعلّم ما بعده فقط
-                    builder.flush()
-                    in_laiha = True
-                elif kind == "sub":
-                    title = re.sub(r"\s*:\s*$", "", t)
-                    if in_laiha and RE_MADDA_N.match(t):
-                        title = "اللائحة التنفيذية: " + title
-                        in_laiha = False
-                    builder.head(opt.h_sub, title)
-                elif kind == "item":
-                    # البند يُحفظ بترقيمه الأصلي كما هو، بلا إعادة ترقيم
-                    builder.para(t, True)
-                elif kind == "definition":
-                    m = RE_DEF.match(t)
-                    builder.para(f"**{m.group(1).strip()}:** {m.group(2).strip()}",
-                                 True)
-                else:
-                    new_para = gap_big or (
-                        prev is not None and idx > 0
-                        and prev["text"].endswith(END_PUNCT)
-                        and line["x1"] < prev["x1"] - INDENT_TOL
-                    )
-                    builder.para(t, new_para or not builder.buf)
-                prev = line
-
-            close_table()
-
-            # سطر الحاشية الذي لا يبدأ برقم إشارة = تكملة للحاشية السابقة
-            for note in notes:
-                if RE_FOOT.match(note) or not builder.notes:
-                    builder.notes.append(note)
-                    st["notes"] += 1
-                else:
-                    builder.notes[-1] += " " + note
-
-            tick(70 + int(25 * (k + 1) / len(pages)), f"بناء ص {i + 1}")
-
-        close_table()
-        builder.dump_notes()
+        builder = _build_document(pages, opt, st, body_size, boiler,
+                                  tick, cancel)
         st["headings"] = len(builder.toc)
+        st["tables"] = builder.tables
 
         # ── ٤) التجميع ──
-        head = []
-        if opt.title:
-            head += [f"# {opt.title}", ""]
-        if opt.build_toc and builder.toc:
-            head += [f"{'#' * max(2, opt.h_top)} الفهرس", ""]
-            base = min(lvl for lvl, _ in builder.toc)
-            seen = {}       # يفضّ تعارض العناوين المتكررة عبر الفهرس كله
-            for lvl, text in builder.toc:
-                head.append("  " * (lvl - base)
-                            + f"- [{text}](#{anchor_of(text, seen)})")
-            head += ["", "---", ""]
-
-        md = "\n".join(head + builder.out)
-        md = re.sub(r"\n{3,}", "\n\n", md).strip() + "\n"
+        md = _assemble(builder, opt)
         st["chars"] = len(md)
         tick(100, "تم")
         return md, st

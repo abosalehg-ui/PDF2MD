@@ -16,7 +16,7 @@ import threading
 import traceback
 
 from PyQt6.QtCore import QSettings, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QTextOption
+from PyQt6.QtGui import QColor, QKeySequence, QShortcut, QTextOption
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -63,19 +63,29 @@ TAGLINE = "استخراج نص عربي سليم من PDF المعطوب الر�
 PATH_ROLE = Qt.ItemDataRole.UserRole
 
 # ── لوحة الألوان ──
+# النِّسَب أدناه محسوبة بمعادلة WCAG على الخلفيتين CREAM و PANEL.
 BROWN = "#6B4423"
 GOLD = "#C9A227"
 CREAM = "#FAF6EE"
 INK = "#2E2418"
-LINE = "#E0D6C2"
+LINE = "#E0D6C2"        # إطار زخرفي للمجموعات — 1.4:1، لا يحمل معنى
 OK = "#2E7D52"
 BAD = "#B3261E"
 PANEL = "#FFFDF8"
 
+# حدّ عناصر الإدخال. الحقل أبيض على خلفية كريمية (تباين 1.08:1)، فالحدّ هو
+# وسيلة تمييزه الوحيدة — وWCAG 2.2 SC 1.4.11 يطلب 3:1 لحدود عناصر التحكم.
+# كان LINE (1.44:1 على الأبيض) فلم تكن الحقول تُرى أصلًا. هذا 3.36:1.
+FIELD_LINE = "#9C8A66"
+
+# مؤشّر التركيز. GOLD يعطي 2.24:1 على CREAM — دون حدّ SC 1.4.11 نفسه، أي أن
+# قاعدة :focus كانت موجودة وغير مرئية عمليًا. هذا 3.52:1 على CREAM
+# و3.73:1 على PANEL. ويبقى GOLD لشريط التقدّم والتبويب: عنصران زخرفيان.
+GOLD_FOCUS = "#A07F15"
+
 # Amiri للعناوين و Cairo للمتن، مع بدائل مضمونة على كل نظام
 SERIF = '"Amiri", "Scheherazade New", "Traditional Arabic", serif'
 SANS = '"Cairo", "Segoe UI", "Tahoma", "Noto Sans Arabic", sans-serif'
-MONO = '"Consolas", "DejaVu Sans Mono", "Courier New", monospace'
 
 QSS = f"""
 * {{ font-family: {SANS}; font-size: 13px; color: {INK}; }}
@@ -108,11 +118,13 @@ QPushButton#gold {{ background: {GOLD}; color: #3A2C08; }}
 QPushButton#gold:hover {{ background: #D9B23B; }}
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QListWidget,
 QPlainTextEdit, QTableWidget {{
-    background: #FFFFFF; border: 1px solid {LINE};
+    background: #FFFFFF; border: 1px solid {FIELD_LINE};
     border-radius: 8px; padding: 6px; selection-background-color: {GOLD};
     selection-color: {INK};
 }}
-QPlainTextEdit {{ font-family: {MONO}; font-size: 12px; }}
+/* المعاينة والسجل نصّ عربي يُقرأ لا كود يُحاذى عموديًا — والخط الأحادي
+   اللاتيني كان يخرجه مفكّك الوصل لانعدام تغطيته العربية. */
+QPlainTextEdit {{ font-family: {SANS}; font-size: 13px; }}
 QProgressBar {{
     border: 1px solid {LINE}; border-radius: 8px; height: 20px;
     text-align: center; background: #FFFFFF;
@@ -130,14 +142,16 @@ QHeaderView::section {{
     border-bottom: 1px solid {LINE}; font-weight: 700; color: {BROWN};
 }}
 QCheckBox::indicator {{ width: 17px; height: 17px; }}
-/* مؤشّر تركيز ظاهر: بدونه يفقد المتنقّل بلوحة المفاتيح موضعه بين ستة
-   مربّعات اختيار متتالية فوق خلفية كريمية مسطّحة. */
+/* مؤشّر تركيز ظاهر: بدونه يفقد المتنقّل بلوحة المفاتيح موضعه بين ثمانية
+   مربّعات اختيار متتالية فوق خلفية كريمية مسطّحة. اللون GOLD_FOCUS لا GOLD
+   لأن الأخير 2.24:1 على الخلفية — دون 3:1 التي يفرضها WCAG 2.2 SC 1.4.11
+   للمؤشّرات غير النصية، أي أن القاعدة كانت تُطبَّق ولا تُرى. */
 QPushButton:focus, QCheckBox:focus, QComboBox:focus, QLineEdit:focus,
 QSpinBox:focus, QDoubleSpinBox:focus, QListWidget:focus,
 QPlainTextEdit:focus, QTableWidget:focus {{
-    border: 2px solid {GOLD};
+    border: 2px solid {GOLD_FOCUS};
 }}
-QTabBar::tab:focus {{ border-bottom: 3px solid {GOLD}; }}
+QTabBar::tab:focus {{ border-bottom: 3px solid {GOLD_FOCUS}; }}
 QStatusBar {{ background: #F3EADA; color: {BROWN}; }}
 QScrollArea {{ border: none; background: transparent; }}
 QSplitter::handle {{ background: transparent; }}
@@ -222,7 +236,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} — محوّل PDF العربي إلى Markdown  v{__version__}")
         self.resize(1200, 800)
-        self.setMinimumSize(940, 620)
+        # الارتفاع الأدنى منزَّل ليعمل التطبيق على شاشة ١٣٦٦×٧٦٨ الشائعة
+        # بعد خصم أشرطة النظام — والأزرار مثبَّتة فلا يخفيها المقاس الصغير.
+        self.setMinimumSize(940, 560)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.setAcceptDrops(True)
         self.queue = []
@@ -248,11 +264,17 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(14, 12, 14, 10)
         lay.setSpacing(10)
 
-        # الحجم والخط من QSS وحده — ضبطهما هنا أيضًا كان يتنازع معه
+        # الحجم والخط من QSS وحده — ضبطهما هنا أيضًا كان يتنازع معه.
+        # المحاذاة صريحة للاثنتين: بلا ضبطها يحسمها Qt من اتجاه نصّ كلٍّ
+        # منهما، فيذهب الاسم اللاتيني يسارًا والوصف العربي يمينًا وتخرج
+        # الترويسة مشقوقة على جهتين متقابلتين.
+        head_align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         title = QLabel(APP_NAME)
         title.setObjectName("title")
+        title.setAlignment(head_align)
         tagline = QLabel(TAGLINE)
         tagline.setObjectName("tagline")
+        tagline.setAlignment(head_align)
         head = QVBoxLayout()
         head.setSpacing(0)
         head.addWidget(title)
@@ -276,12 +298,22 @@ class MainWindow(QMainWindow):
         self.say_status("جاهز — اسحب ملفات PDF إلى القائمة أو اضغط «إضافة ملفات»")
 
     def _left_panel(self):
+        """
+        اللوحة اليسرى: خيارات قابلة للتمرير، وصفّ أزرار **مثبَّت** أسفلها.
+
+        كان صفّ الأزرار داخل منطقة التمرير، فكان ارتفاع محتواها (929px)
+        يتجاوز نافذة العرض عند المقاس الافتراضي (649px) وعند الأدنى — أي
+        أن زر «تحويل»، وهو الفعل الأساسي في التطبيق، لا يُرى إطلاقًا حتى
+        يمرّر المستخدم أو يكبّر النافذة إلى ما يقارب ١٤٠٠×١٠٠٠. تثبيته
+        خارج المنطقة المُمرَّرة يجعله ظاهرًا على كل مقاس مدعوم.
+        """
         inner = QWidget()
         v = QVBoxLayout(inner)
         v.setContentsMargins(0, 0, 6, 0)
         v.addWidget(self._files_box())
         v.addWidget(self._options_box())
         v.addWidget(self._output_box())
+        v.addStretch()
 
         row = QHBoxLayout()
         self.btn_diag = QPushButton("فحص تشخيصي")
@@ -302,14 +334,18 @@ class MainWindow(QMainWindow):
         row.addWidget(self.btn_diag)
         row.addWidget(self.btn_go, 1)
         row.addWidget(self.btn_stop)
-        v.addLayout(row)
-        v.addStretch()
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(inner)
-        scroll.setMinimumWidth(400)
-        return scroll
+
+        panel = QWidget()
+        col = QVBoxLayout(panel)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.addWidget(scroll, 1)      # الخيارات وحدها هي التي تُمرَّر
+        col.addLayout(row)            # الأزرار مثبَّتة أسفل اللوحة دائمًا
+        panel.setMinimumWidth(400)
+        return panel
 
     def _files_box(self):
         box = QGroupBox("الملفات")
@@ -329,7 +365,13 @@ class MainWindow(QMainWindow):
         b_add.clicked.connect(self.pick_files)
         b_del = QPushButton("حذف المحدد")
         b_del.setObjectName("ghost")
+        b_del.setToolTip("حذف الملفات المحددة من القائمة (Delete)")
         b_del.clicked.connect(self.remove_selected)
+        # مفتاح Delete على القائمة نفسها: إدارة القائمة كانت بالفأرة وحدها،
+        # فالمتنقّل بلوحة المفاتيح يصل إلى القائمة ولا يستطيع الحذف منها.
+        del_key = QShortcut(QKeySequence.StandardKey.Delete, self.files)
+        del_key.setContext(Qt.ShortcutContext.WidgetShortcut)
+        del_key.activated.connect(self.remove_selected)
         b_clr = QPushButton("تفريغ")
         b_clr.setObjectName("ghost")
         b_clr.clicked.connect(self.clear_files)
@@ -604,20 +646,36 @@ class MainWindow(QMainWindow):
 
     # ---------- الإعدادات ----------
 
+    def _num(self, key, default, cast=int):
+        """
+        يقرأ قيمة رقمية من الإعدادات، ويسقط إلى الافتراضي عند أي تلف.
+
+        `int(s.value(...))` المكشوف كان يرمي ValueError داخل __init__ عند
+        قيمة غير رقمية (تحرير يدوي لملف الإعدادات، أو ترقية، أو تلف)،
+        فلا يُقلع التطبيق أصلًا ولا يعرف المستخدم سببًا ولا مخرجًا.
+        """
+        try:
+            return cast(self._settings.value(key, default))
+        except (TypeError, ValueError):
+            return default
+
     def _load_settings(self):
         """يستعيد اختيارات آخر جلسة — بدونها يُعاد ضبط كل شيء كل تشغيل."""
         s = self._settings
-        self.cb_profile.setCurrentIndex(int(s.value("profile", 0)))
-        self.cb_foot.setCurrentIndex(int(s.value("footnotes", 0)))
+        self.cb_profile.setCurrentIndex(self._num("profile", 0))
+        self.cb_foot.setCurrentIndex(self._num("footnotes", 0))
         self.ed_out.setText(s.value("out_dir", "", type=str))
-        self.sp_top.setValue(int(s.value("h_top", 2)))
-        self.sp_sub.setValue(int(s.value("h_sub", 3)))
-        self.sp_gap.setValue(float(s.value("para_gap", 0.75)))
+        self.sp_top.setValue(self._num("h_top", 2))
+        self.sp_sub.setValue(self._num("h_sub", 3))
+        self.sp_gap.setValue(self._num("para_gap", 0.75, float))
         for key, box in self._checkboxes().items():
             box.setChecked(s.value(key, True, type=bool))
         geo = s.value("geometry")
         if geo is not None:
-            self.restoreGeometry(geo)
+            try:
+                self.restoreGeometry(geo)
+            except TypeError:      # قيمة محفوظة بنوع غير متوقّع — تُتجاهل
+                pass
 
     def _save_settings(self):
         s = self._settings

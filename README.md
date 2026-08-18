@@ -45,12 +45,15 @@
 
 التوقيع أو الختم أو شعار الجهة يُرسم فوق المتن أو خلفه بميل وشفافية، فتتقاطع إحداثياته مع أسطر المتن. وبما أن بناء الأسطر يضمّ الأجزاء حسب مركزها الرأسي، فإن جزءًا مائلًا يعبر عشرة أسطر **يُحشر داخل كل سطر يمرّ به**: النص يتقطّع، والكلمات تلتحم، وأسطر المتن القصيرة الناتجة تُقرأ عناوين. لذلك يُحذف قبل الضمّ لا بعده.
 
-الرصد بعلامتين مستقلتين — أي واحدة تكفي:
+الرصد بثلاث علامات مستقلة — أي واحدة تكفي:
 
 | العلامة | القاعدة | لماذا |
 |---|---|---|
 | الشفافية | `alpha < 60%` | المتن يُطبع معتمًا، فالباهت طبقة زخرفية لا محتوى |
+| اللون | لمعان اللون `> 0.62` | أكثر الأختام تُرسم رماديًا **معتمًا** لا شفافًا |
 | الميل | انحراف اتجاه السطر عن الأفق `> 0.08` | المتن أفقي، والمائل ختم أو توقيع |
+
+**لماذا اللون علامة مستقلة:** ختم «صورة طبق الأصل» يُرسم غالبًا بلون رمادي معتم (`alpha=255`)، فلا تمسكه الشفافية. وهو ينجو كبير الخط فيُصنَّف **عنوانًا** ويدخل الفهرس المولَّد — أي أن تركه لا يبقيه في الناتج فحسب، بل يلوّث بنية المستند كلها.
 
 **حارس الميل:** لو كانت كل أسطر الصفحة مائلة فالصفحة نفسها مائلة (مسح ضوئي مائل أو صفحة عرضية بلا `/Rotate`)، فلا يُحذف شيء — الميل يميّز العلامة عن المتن فقط حين يوجد متن أفقي تُقارن به.
 
@@ -181,6 +184,12 @@ python main.py نظام.pdf --profile saudi_law --title "نظام العمل" -o
 # نطاق صفحات + وضع سريع بلا فحص حبر
 python main.py كتاب.pdf --pages 20-60 --no-ink -o جزء.md
 
+# صفحة واحدة — رقم مجرّد بلا نطاق
+python main.py كتاب.pdf --pages 12 -o صفحة.md
+
+# مسار بلا امتداد .md يُعدّ مجلدًا يُكتب فيه باسم ملف PDF
+python main.py كتاب.pdf -o ./md
+
 # دفعة كاملة إلى مجلد — الملف الفاشل يُتخطّى ولا يوقف البقية
 python main.py *.pdf -o ./md/
 
@@ -236,7 +245,11 @@ python main.py --help
 | `CELL_GAP` | `6.0` | فجوة أفقية تفصل خلايا الجدول |
 | `INK_DPI` | `150` | دقة رسم الصفحة لفحص الحبر |
 | `WM_ALPHA` | `0.60` | شفافية دونها يُعدّ النص علامة مائية |
+| `WM_LUMA` | `0.62` | لمعان لون أعلى منه = ختم رمادي باهت لا متن |
 | `WM_TILT` | `0.08` | انحراف اتجاه السطر عن الأفق يُعدّ ميلًا |
+| `INK_PAD` | `0.30` | نسبة تقليص الفجوة من كل جهة قبل قياس الحبر |
+| `SEG_CLASH` | `0.50` | تداخل أفقي فوقه لا يُضمّ الجزآن في سطر واحد |
+| `INK_MAX_PIXELS` | `40M` | سقف بكسلات الصفحة المرسومة — فوقه تنزل الدقة |
 
 عدِّلها إن واجهت ملفًا بخصائص مختلفة جذريًّا.
 
@@ -250,6 +263,17 @@ python main.py --help
 - الأداة موجَّهة للعربي، لكنها تكتشف الأسطر اللاتينية تلقائيًّا وتعاملها من اليسار لليمين.
 - **الكتب الضخمة جدًّا** (ألف صفحة فأكثر): أسطر المستند كله تُحمَّل في الذاكرة قبل البناء، لأن حساب حجم المتن الغالب والترويسات المتكررة يحتاج المستند كاملًا.
 - **الملفات المحمية بكلمة مرور** تُرفض برسالة واضحة — أزل الحماية أولًا.
+- **الصفحات العملاقة** (أكبر من ٤٠ مليون بكسل عند ١٥٠ نقطة/بوصة) تُرسم بدقة أدنى تلقائيًا في فحص الحبر، حمايةً من نفاد الذاكرة. الفحص عليها أقل دقة، وبقية المسار لا يتأثر.
+
+---
+
+## الخصوصية
+
+المعالجة **محلية بالكامل**. الأداة لا تتصل بالشبكة إطلاقًا أثناء التحويل، ولا ترفع شيئًا، ولا تكتب ملفات مؤقتة. الناتج يُكتب بجانب ملف PDF ما لم يُحدَّد `-o`، والشيء الوحيد المحفوظ خارج المخرَجات هو تفضيلات الواجهة (النمط، مجلد الحفظ، مقاس النافذة) في ملف إعدادات المستخدم.
+
+هذا يعني أن تحويل مذكرة أو مرافعة أو وثيقة سرّية لا يخرجها من جهازك. (الاتصال الوحيد بالشبكة في المشروع هو `pip` داخل `run.sh` و`run.bat` عند أول تشغيل لتثبيت المتطلبات.)
+
+**قاعدة `-o`:** المسار المنتهي بـ`.md` يُعدّ **ملفًا**، وما عداه يُعدّ **مجلدًا** يُكتب فيه ملف باسم ملف PDF. القاعدة واحدة سواء حوّلت ملفًا أو دفعة.
 
 ---
 
@@ -354,7 +378,7 @@ No dictionary, no guessing. Every fix is a geometric rule derived from glyph coo
 
 1. **Reversed ligatures** — every glyph of a ligature except the last is exported with **zero width**, and the run is stored in visual (reversed) order. Each run of zero-width non-diacritic glyphs followed by a box-carrying glyph is emitted as the carrier followed by the run **reversed**. Runs are not limited to one glyph: `الله` is a single glyph swallowing `ه ل ل` at zero width plus the alef carrying the box, so pairwise swapping alone produced `لهال`. The rule is general — it is not tied to the letter *lam* — so it covers `لا` `لأ` `لإ` `لآ` `لم` `لح` `لج` `لخ` `تا` `با` `في` `لله` and any other ligature in any font.
 
-2. **Watermark removal** — a signature, stamp, or agency logo is painted over or under the body at an angle and with transparency, so its coordinates intersect body lines. Because line building groups fragments by vertical centre, one tilted fragment crossing ten lines is spliced into every line it passes through: text fractures, words fuse, and the resulting short body lines read as headings — so it is dropped before grouping, not after. Two independent signals, either one is enough: transparency (`alpha < 60%` — body text is printed opaque, so faint text is decoration) and tilt (line direction deviating from horizontal by `> 0.08` — body text is horizontal). Tilt guard: if *every* line on the page is tilted, the page itself is tilted (a skewed scan, or a landscape page with no `/Rotate`) and nothing is dropped. Disable with `--keep-watermark`.
+2. **Watermark removal** — a signature, stamp, or agency logo is painted over or under the body at an angle and with transparency, so its coordinates intersect body lines. Because line building groups fragments by vertical centre, one tilted fragment crossing ten lines is spliced into every line it passes through: text fractures, words fuse, and the resulting short body lines read as headings — so it is dropped before grouping, not after. Three independent signals, any one is enough: transparency (`alpha < 60%` — body text is printed opaque, so faint text is decoration), colour (luminance `> 0.62` — most stamps are painted in **opaque grey** rather than transparent, and surviving at a large font size they get classified as *headings* and pollute the generated table of contents), and tilt (line direction deviating from horizontal by `> 0.08` — body text is horizontal). Tilt guard: if *every* line on the page is tilted, the page itself is tilted (a skewed scan, or a landscape page with no `/Rotate`) and nothing is dropped. Disable with `--keep-watermark`.
 
 3. **Visual line reconstruction** — PyMuPDF splits a line at every direction change. Fragments are merged into one visual line when **both** hold: vertical proximity (`y`-centre delta ≤ `0.55 ×` max height) **and** no horizontal overlap (< 50% of the narrower width). The overlap test runs against **each fragment individually**, not the combined box — otherwise numbers sitting between two Arabic fragments get rejected. Line direction: descending by `x1` if any Arabic letter is present, ascending by `x0` otherwise.
 
@@ -397,7 +421,11 @@ Located in `src/core.py`:
 | `CELL_GAP` | `6.0` | horizontal gap separating table cells |
 | `INK_DPI` | `150` | rasterisation DPI for the ink probe |
 | `WM_ALPHA` | `0.60` | opacity below which text counts as a watermark |
+| `WM_LUMA` | `0.62` | colour luminance above which text is a faint grey stamp |
 | `WM_TILT` | `0.08` | line-direction deviation from horizontal that counts as tilted |
+| `INK_PAD` | `0.30` | gap shrink ratio per side before probing ink |
+| `SEG_CLASH` | `0.50` | horizontal overlap above which fragments are not one line |
+| `INK_MAX_PIXELS` | `40M` | pixel ceiling for the rasterised page — DPI scales down above it |
 
 ## Known limits
 
@@ -407,6 +435,13 @@ Located in `src/core.py`:
 - Arabic-oriented, but Latin-only lines are detected automatically and treated left-to-right.
 - **Very large books** (1000+ pages): the whole document's lines are held in memory before building, because the dominant body font size and the repeated headers can only be computed across the full document.
 - **Password-protected files** are rejected with a clear message — remove the protection first.
+- **Oversized pages** (above 40M pixels at 150 DPI) are rasterised at a reduced DPI for the ink probe, to avoid exhausting memory. The probe is less precise on those pages; nothing else changes.
+
+## Privacy
+
+Processing is **entirely local**. The tool never touches the network during conversion, uploads nothing, and writes no temporary files. Output goes next to the source PDF unless `-o` says otherwise, and the only thing stored outside the output is the GUI's preferences (profile, output folder, window size) in the user's settings file. Converting a confidential document does not take it off your machine. (The project's only network access is `pip` inside `run.sh` / `run.bat` on first launch.)
+
+**The `-o` rule:** a path ending in `.md` is a **file**; anything else is a **directory** that receives a file named after the PDF. The rule is the same for a single file and for a batch.
 
 ## Layout
 

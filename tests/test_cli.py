@@ -121,3 +121,62 @@ def test_diag_runs(tmp_path, capsys):
     rc = cli.main([pdf, "--diag"])
     assert rc == 0
     assert "الصفحات" in capsys.readouterr().out
+
+
+# ═══════════ نطاق الصفحات: الصفحة الواحدة ═══════════
+
+def opts_for(pages):
+    args = cli.build_parser().parse_args(["x.pdf", "--pages", pages])
+    return cli.options_from(args)
+
+
+def test_single_page_accepted_without_a_range():
+    """كان `--pages 12` مرفوضًا، فأشيع استعمال يتطلب كتابة `12-12`."""
+    opt = opts_for("12")
+    assert (opt.page_from, opt.page_to) == (12, 12)
+
+
+def test_single_page_tolerates_surrounding_space():
+    opt = opts_for("  7  ")
+    assert (opt.page_from, opt.page_to) == (7, 7)
+
+
+def test_range_still_parsed():
+    opt = opts_for("10-40")
+    assert (opt.page_from, opt.page_to) == (10, 40)
+
+
+def test_malformed_range_still_rejected():
+    """قبول الصفحة الواحدة وسّع الصيغة، ولم يفتح الباب لصيغ ناقصة."""
+    for bad in ("abc", "10-", "-40", "10-20-30", "1.5"):
+        with pytest.raises(SystemExit):
+            opts_for(bad)
+
+
+def test_empty_pages_value_means_no_range():
+    """`--pages ""` قيمة فارغة = لا نطاق، فيُحوَّل الملف كله (سلوك قائم)."""
+    opt = opts_for("")
+    assert (opt.page_from, opt.page_to) == (0, 0)
+
+
+def test_reversed_range_still_rejected_after_single_page_support():
+    with pytest.raises(SystemExit):
+        opts_for("40-10")
+
+
+# ═══════════ قاعدة -o من طرف سطر الأوامر ═══════════
+
+def test_extensionless_out_is_a_folder(tmp_path):
+    """`-o مجلد` يُنشئ مجلدًا فيه ملف باسم PDF، لا ملفًا بلا امتداد."""
+    pdf = make_pdf(tmp_path / "src.pdf")
+    target = tmp_path / "مخرجات"
+    assert cli.main([pdf, "-o", str(target), "-q"]) == 0
+    assert target.is_dir()
+    assert (target / "src.md").is_file()
+
+
+def test_md_out_is_a_file(tmp_path):
+    pdf = make_pdf(tmp_path / "src.pdf")
+    target = tmp_path / "ناتج.md"
+    assert cli.main([pdf, "-o", str(target), "-q"]) == 0
+    assert target.is_file()

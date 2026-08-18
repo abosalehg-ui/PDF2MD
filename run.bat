@@ -22,7 +22,9 @@ if errorlevel 1 (
     )
 )
 
-%PY% -c "import fitz, numpy, PyQt6" >nul 2>nul
+rem الفحص بالاسم الجديد pymupdf مع سقوط إلى fitz - مثل core.py تمامًا. لو بقي
+rem على fitz وحده لأعاد التثبيت في كل تشغيل بعد إزالة الاسم المهجور.
+%PY% -c "import numpy, PyQt6; exec('try:\n import pymupdf\nexcept ImportError:\n import fitz')" >nul 2>nul
 if errorlevel 1 (
     echo المتطلبات ناقصة - جارٍ تثبيتها من requirements.txt ...
     %PY% -m pip install -r "%~dp0requirements.txt"

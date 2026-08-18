@@ -159,3 +159,71 @@ def test_real_pdf_table_end_to_end(tmp_path):
     assert "| Name | Days | Rate | Total |" in md
     assert "| Ahmed | 5 | 240 | 1200 |" in md
     assert "Notes follow the table below." in md      # الفقرة تغلق الجدول
+
+
+# ═══════════ الجدول مقابل قاعدة الحاشية ═══════════
+
+def placed_page(monkeypatch, tmp_path, lines, **opts):
+    """يمرّر أسطرًا مصطنعة كاملة الإحداثيات عبر convert بلا مساس بـbody_size."""
+    monkeypatch.setattr(core, "page_lines", lambda page, st=None, **kw: lines)
+    monkeypatch.setattr(structure, "body_font_size", lambda pages: 11.0)
+
+    import pymupdf
+    doc = pymupdf.open()
+    doc.new_page()                                   # A4 — ارتفاع 842
+    path = str(tmp_path / "notes.pdf")
+    doc.save(path)
+    doc.close()
+    return convert(path, Options(check_ink=False, build_toc=False, **opts))
+
+
+def body_line(text, y, size=11.0):
+    return {"text": text, "cells": [], "row": False, "size": size,
+            "bold": False, "x0": 72, "x1": 400, "y0": y, "y1": y + 12}
+
+
+def table_line(cells, y, size=8.0):
+    return {"text": " ".join(cells), "cells": cells, "row": True, "size": size,
+            "bold": False, "x0": 72, "x1": 500, "y0": y, "y1": y + 10}
+
+
+def test_small_table_in_lower_half_is_not_swallowed_as_a_footnote(
+        tmp_path, monkeypatch):
+    """
+    الانحدار: الجدول يُصفّ بخط أصغر من المتن ويقع غالبًا أسفل الصفحة، فيحقق
+    شرطي الحاشية معًا. وبلا استثنائه كانت صفوفه تُبتلع ثم تضمّها قاعدة
+    تكملة الحاشية في سطر اقتباس واحد — فقدان تام للبنية بلا تحذير.
+    """
+    lines = [body_line("Body sentence one here.", 100),
+             body_line("Body sentence two here.", 116),
+             table_line(["A", "B", "C", "D"], 520),
+             table_line(["1", "2", "3", "4"], 534),
+             table_line(["5", "6", "7", "8"], 548)]
+    md, st = placed_page(monkeypatch, tmp_path, lines)
+
+    assert st["tables"] == 1
+    assert st["notes"] == 0
+    assert "| A | B | C | D |" in md
+    assert "> A B C D" not in md              # لم يخرج اقتباسًا ملتحمًا
+
+
+def test_real_footnote_in_lower_half_still_captured(tmp_path, monkeypatch):
+    """الاستثناء للجداول وحدها — الحاشية الحقيقية ما زالت تُلتقط وتُؤجَّل."""
+    lines = [body_line("Body sentence one here.", 100),
+             body_line("(1) A genuine footnote.", 560, size=8.0)]
+    md, st = placed_page(monkeypatch, tmp_path, lines)
+
+    assert st["notes"] == 1
+    assert "> (1) A genuine footnote." in md
+
+
+def test_table_rows_become_footnotes_when_tables_disabled(
+        tmp_path, monkeypatch):
+    """مع --no-tables لا يوجد جدول يُحمى، فالصف الصغير يعود حاشيةً."""
+    lines = [body_line("Body sentence one here.", 100),
+             table_line(["A", "B", "C", "D"], 520),
+             table_line(["1", "2", "3", "4"], 534)]
+    md, st = placed_page(monkeypatch, tmp_path, lines, tables=False)
+
+    assert st["tables"] == 0
+    assert "|" not in md

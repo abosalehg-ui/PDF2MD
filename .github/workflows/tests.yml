@@ -20,9 +20,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      # PyQt6 غير لازم للاختبارات — الواجهة لا تُختبر في CI
+      # وظيفة المحرّك: بلا PyQt6 عمدًا — تثبت أن سطر الأوامر يعمل بدونه.
+      # اختبارات الواجهة تُتخطّى هنا وتشتغل في وظيفة gui المستقلة أدناه.
       - run: pip install "PyMuPDF>=1.26,<2" "numpy>=1.24,<3" pytest
       - run: pytest -q
+
+  # الواجهة تُختبر بقناة offscreen في Qt: نافذة كاملة بلا خادم عرض. بلا هذه
+  # الوظيفة كانت اختبارات gui تُتخطّى في CI فلا تحرس شيئًا — وgui.py أكبر
+  # ملف في المشروع.
+  gui:
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # مكتبات النظام التي يربطها Qt6 ولا تأتي مع العدّاء افتراضيًا
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libegl1 libgl1 libxkbcommon0 libdbus-1-3
+      - run: pip install "PyMuPDF>=1.26,<2" "numpy>=1.24,<3" "PyQt6>=6.6,<7" pytest
+      - run: pytest tests/test_gui.py -q
 
   lint:
     runs-on: ubuntu-latest
