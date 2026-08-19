@@ -233,6 +233,37 @@ def test_page_references_existing_assets():
         assert os.path.exists(os.path.join(ROOT, asset))
 
 
+def test_vercel_config_matches_the_build_script():
+    """
+    Vercel يقرأ vercel.json وحده. وهو ملف صامت العطب: مجلد مخرَج خاطئ
+    يُنتج نشرًا «ناجحًا» لموقع فارغ، ومفتاح مجهول واحد يُسقط البناء بلا
+    سجلّات أصلًا (schema فيه additionalProperties: false). فيُربط هنا
+    بمصدره الحقيقي: tools/build_site.py.
+
+    و framework يجب أن يبقى null: بدونه يرى Vercel ملفَّ main.py في الجذر
+    فيظنّ المشروع تطبيق بايثون ويبحث فيه عن متغيّر app.
+    """
+    with open(os.path.join(ROOT, "vercel.json"), encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    assert cfg["framework"] is None
+    assert cfg["outputDirectory"] == "_site"
+
+    script = os.path.join("tools", "build_site.py")
+    assert script.replace(os.sep, "/") in cfg["buildCommand"]
+    assert os.path.isfile(os.path.join(ROOT, script))
+
+    # مجلد المخرَج في السكربت هو مصدر الحقيقة — لا نسخة ثانية في JSON
+    with open(os.path.join(ROOT, script), encoding="utf-8") as f:
+        build = f.read()
+    assert f'"{cfg["outputDirectory"]}"' in build
+
+    # مفتاح واحد مجهول يُسقط البناء بلا سجلّ — فلا يُقبل إلا المعروف
+    allowed = {"$schema", "framework", "installCommand", "buildCommand",
+               "outputDirectory"}
+    assert set(cfg) <= allowed, f"مفاتيح غير متوقّعة: {set(cfg) - allowed}"
+
+
 def test_page_option_ids_cover_every_engine_option():
     """
     كل خيار في Options له عنصر في الصفحة. الخيار الذي يُضاف إلى المحرّك
