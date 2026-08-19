@@ -1,7 +1,9 @@
 name: pages
 
 # ينشر واجهة الويب على GitHub Pages.
-# شرط التشغيل مرة واحدة في إعدادات المستودع:
+#
+# لا يحتاج تهيئة يدوية: خطوة configure-pages أدناه تفعّل Pages بنفسها عند
+# أول تشغيل (enablement: true). ولو مُنع ذلك بسياسة المؤسسة، فالتفعيل يدويًا:
 #   Settings → Pages → Build and deployment → Source = GitHub Actions
 
 on:
@@ -52,7 +54,13 @@ jobs:
       - name: بناء الموقع
         run: python3 tools/build_site.py --fetch
 
+      # enablement يفعّل Pages على المستودع إن لم يكن مفعّلًا، ويجعل مصدره
+      # سير العمل هذا. بدونه تسقط النشرة الأولى بـ«Get Pages site failed»
+      # على مستودع لم يُفعَّل فيه Pages يدويًا — وهو ما حدث فعلًا في أول
+      # نشرة بعد الدمج.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
