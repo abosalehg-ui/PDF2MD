@@ -1,0 +1,609 @@
+/*
+ * styles.css — هوية PDF2MD على الويب.
+ *
+ * اللوحة منقولة حرفيًا من QSS في src/gui.py: بنّي وذهبي على كريمي. من
+ * استعمل تطبيق سطح المكتب يجب أن يتعرّف على الصفحة قبل أن يقرأ عنوانها.
+ * النِّسَب المذكورة في gui.py محسوبة بمعادلة WCAG، ونسخها هنا يحفظها.
+ */
+
+:root {
+  --brown: #6b4423;
+  --brown-hi: #7d5230;
+  --gold: #c9a227;
+  --gold-focus: #a07f15;
+  --cream: #faf6ee;
+  --panel: #fffdf8;
+  --ink: #2e2418;
+  --muted: #7a6a55;
+  --line: #e0d6c2;
+  --field-line: #9c8a66;
+  --ok: #2e7d52;
+  --bad: #b3261e;
+  --head: #f3eada;
+  --on-brown: #fff9ec;
+
+  --serif: 'Amiri', 'Scheherazade New', 'Traditional Arabic', serif;
+  --sans: 'Cairo', 'Segoe UI', 'Tahoma', 'Noto Sans Arabic', sans-serif;
+  --radius: 10px;
+}
+
+/*
+ * المظهر الداكن: البنّي والذهبي على خلفية بنّية شديدة القتامة، لا رمادي
+ * محايد — قلب اللوحة إلى الرمادي كان يمحو هوية الأداة في نصف الحالات.
+ */
+[data-theme='dark'] {
+  --brown: #d9b26a;
+  --brown-hi: #e6c485;
+  --gold: #d9b23b;
+  --gold-focus: #e8c74f;
+  --cream: #1b1611;
+  --panel: #241d16;
+  --ink: #f2e9da;
+  --muted: #b3a48c;
+  --line: #3d3327;
+  --field-line: #6f6047;
+  --ok: #63c68f;
+  --bad: #ef857c;
+  --head: #2e2519;
+  --on-brown: #241d16;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * قاعدة المتصفح `[hidden] { display: none }` أضعف من أي قاعدة صنف تضبط
+ * display. و.layout شبكة و.pane مرن — فكان `hidden` عليهما بلا أثر:
+ * الألسنة الثلاثة تُعرض معًا، ولوحة العمل تظهر قبل جهوز المحرّك.
+ */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  padding: 0 clamp(12px, 3vw, 32px) 24px;
+  background: var(--cream);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--serif);
+  color: var(--brown);
+  margin: 0 0 10px;
+}
+
+.skip {
+  position: absolute;
+  right: -9999px;
+}
+.skip:focus {
+  right: 12px;
+  top: 12px;
+  background: var(--panel);
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  z-index: 20;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ── الترويسة ── */
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 22px 0 10px;
+}
+
+.brand h1 {
+  font-size: clamp(26px, 4vw, 34px);
+  margin: 0;
+}
+
+.tagline {
+  color: var(--muted);
+  margin: 2px 0 0;
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.chip {
+  background: var(--head);
+  color: var(--brown);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.icon-btn {
+  background: transparent;
+  border: 1px solid var(--brown);
+  color: var(--brown);
+  border-radius: 999px;
+  width: 38px;
+  height: 38px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  text-decoration: none;
+}
+.icon-btn:hover {
+  background: var(--head);
+}
+
+.privacy {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-right: 4px solid var(--gold);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin: 0 0 16px;
+}
+
+/* ── لوحة الإقلاع ── */
+
+.boot {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.boot.failed {
+  border-color: var(--bad);
+}
+.boot.failed .spinner {
+  animation: none;
+  border-top-color: var(--bad);
+}
+
+.boot-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 3px solid var(--line);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  flex: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+.bar {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  height: 18px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  background: var(--gold);
+  height: 100%;
+  width: 0;
+  transition: width 0.25s ease;
+}
+
+/* ── التخطيط ── */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.card h2 {
+  font-size: 18px;
+}
+
+.grow {
+  display: flex;
+  flex-direction: column;
+  min-height: 420px;
+}
+
+/* ── منطقة الإفلات وقائمة الملفات ── */
+
+.drop {
+  border: 2px dashed var(--field-line);
+  border-radius: var(--radius);
+  padding: 20px 14px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--cream);
+}
+.drop p {
+  margin: 2px 0;
+}
+.drop.over {
+  border-color: var(--gold-focus);
+  background: var(--head);
+}
+.drop-icon {
+  font-size: 28px;
+}
+
+.files {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.files li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  background: var(--cream);
+}
+
+.files .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: ltr;
+  text-align: right;
+}
+
+.files .size {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.files .state {
+  font-size: 13px;
+  white-space: nowrap;
+}
+.files .state.ok {
+  color: var(--ok);
+}
+.files .state.bad {
+  color: var(--bad);
+}
+
+.files .x {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.files .x:hover {
+  color: var(--bad);
+}
+
+/* ── الحقول ── */
+
+.field {
+  margin-bottom: 12px;
+}
+
+.field > label,
+.field > .label {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.inline label {
+  color: var(--muted);
+}
+.inline input[type='number'] {
+  width: 5.5rem;
+}
+
+input[type='text'],
+input[type='number'],
+select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--field-line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  width: 100%;
+}
+
+.checks {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0 4px;
+}
+.checks label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+.checks input {
+  margin-top: 6px;
+  flex: none;
+  width: 17px;
+  height: 17px;
+  accent-color: var(--brown);
+}
+
+/* ── الأزرار ── */
+
+button {
+  font: inherit;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 9px 18px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--brown);
+  color: var(--on-brown);
+}
+button.primary:hover:not(:disabled) {
+  background: var(--brown-hi);
+}
+
+button.gold {
+  background: var(--gold);
+  color: #3a2c08;
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--brown);
+  border-color: var(--brown);
+}
+button.ghost:hover:not(:disabled) {
+  background: var(--head);
+}
+
+button:disabled {
+  background: #c4b8a6;
+  color: #6f6355;
+  border-color: transparent;
+  cursor: not-allowed;
+}
+[data-theme='dark'] button:disabled {
+  background: #3a3125;
+  color: #8d8271;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.row.wrap {
+  flex-wrap: wrap;
+}
+.row.end {
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+/*
+ * مؤشّر تركيز ظاهر على كل ما يُطال بلوحة المفاتيح. اللون gold-focus لا
+ * gold: الثاني ٢٫٢٤:١ على الخلفية الكريمية — دون ٣:١ التي يفرضها
+ * WCAG 2.2 SC 1.4.11، أي قاعدة تُطبَّق ولا تُرى.
+ */
+:focus-visible {
+  outline: 3px solid var(--gold-focus);
+  outline-offset: 2px;
+}
+
+/* ── الألسنة والمخرَج ── */
+
+.actions .bar {
+  margin: 12px 0 8px;
+}
+
+.status {
+  margin: 0;
+  color: var(--muted);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.tabs button {
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  color: var(--ink);
+  padding: 8px 16px;
+}
+
+.tabs button[aria-selected='true'] {
+  color: var(--brown);
+  border-bottom-color: var(--gold);
+}
+
+.pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.out-bar {
+  margin-bottom: 10px;
+}
+.out-bar select {
+  flex: 1;
+  min-width: 140px;
+  width: auto;
+}
+
+.output {
+  flex: 1;
+  min-height: 240px;
+  max-height: 60vh;
+  overflow: auto;
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 0;
+  /* الناتج نصّ عربي يُقرأ لا كود يُحاذى عموديًا — والخط الأحادي اللاتيني
+     كان يخرجه مفكّك الوصل لانعدام تغطيته العربية (كما في gui.py). */
+  font-family: var(--sans);
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.output.short {
+  min-height: 120px;
+  max-height: 30vh;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.verdict {
+  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: var(--head);
+  font-weight: 700;
+}
+.verdict.ok {
+  color: var(--ok);
+}
+.verdict.bad {
+  color: var(--bad);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 14px;
+}
+
+th,
+td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+}
+
+th {
+  background: var(--head);
+  color: var(--brown);
+}
+
+td:first-child,
+th:first-child {
+  text-align: right;
+}
+
+tr.bad td {
+  color: var(--bad);
+}
+
+/* ── التذييل ── */
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  margin-top: 22px;
+  padding-top: 12px;
+  font-size: 14px;
+}
+
+.foot a {
+  color: var(--brown);
+}

@@ -1,0 +1,62 @@
+name: pages
+
+# ينشر واجهة الويب على GitHub Pages.
+# شرط التشغيل مرة واحدة في إعدادات المستودع:
+#   Settings → Pages → Build and deployment → Source = GitHub Actions
+
+on:
+  push:
+    branches: [main]
+    # الدفعة التي لا تمسّ الصفحة ولا المحرّك لا تستحق نشرًا جديدًا
+    paths:
+      - "index.html"
+      - "web/**"
+      - "src/**"
+      - "tools/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# نشرة واحدة في كل وقت، وبلا إلغاء الجارية: إلغاء نشرة في منتصفها يترك
+# الموقع المنشور على حالة نصفية.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # حارس: الصفحة تشغّل src/web.py نفسه، وسقوط اختباراته يعني موقعًا
+      # معطوبًا بلا أن يُخطئ أي شيء في خطوة البناء.
+      - name: اختبار جسر الويب
+        run: |
+          pip install "PyMuPDF>=1.26,<2" "numpy>=1.24,<3" pytest
+          pytest tests/test_web.py -q
+
+      # يُنزّل زمن التشغيل (Pyodide و numpy و PyMuPDF بصيغة wasm) ويتحقّق
+      # من بصمة كل ملف، ثم يجمّع _site
+      - name: بناء الموقع
+        run: python3 tools/build_site.py --fetch
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
