@@ -2,7 +2,9 @@
 
 <div dir="rtl">
 
-أداة سطح مكتب لاستخراج **نص عربي سليم** من ملفات PDF المعطوبة، وتحويله إلى **Markdown منظَّم**.
+أداة لاستخراج **نص عربي سليم** من ملفات PDF المعطوبة، وتحويله إلى **Markdown منظَّم** — بثلاث واجهات فوق محرّك واحد: سطر أوامر، وتطبيق سطح مكتب، و**صفحة ويب تعمل بلا خادم**.
+
+🌐 **[جرّبها في المتصفّح](https://abosalehg-ui.github.io/PDF2MD/)** — بلا تثبيت وبلا رفع: ملفك لا يغادر جهازك.
 
 [English below ↓](#english)
 
@@ -231,6 +233,47 @@ python main.py --help
 
 ---
 
+## واجهة الويب — بلا تثبيت وبلا خادم
+
+**[abosalehg-ui.github.io/PDF2MD](https://abosalehg-ui.github.io/PDF2MD/)**
+
+الصفحة ليست نسخة ثانية من الأداة، بل **الأداة نفسها**: ملفات `src/*.py` التي يشغّلها سطر الأوامر وتطبيق سطح المكتب تُنزَّل إلى المتصفّح وتُنفَّذ فيه حرفيًا بلا تعديل، فوق مفسّر بايثون مُصرَّف إلى WebAssembly ([Pyodide](https://pyodide.org)) ومعه PyMuPDF و numpy بالصيغة نفسها. الناتج مطابق بايتًا ببايت لما يخرج من `python main.py`، لأن الشيفرة واحدة لا نظيرتان.
+
+| | |
+|---|---|
+| **الخصوصية** | الملف يُقرأ في المتصفّح ولا يُرفع. سياسة أمن المحتوى في الصفحة `connect-src 'self'` — أي أن الصفحة **لا تملك إذن** الاتصال بأي خادم خارجي، فالوعد مضمون تقنيًا لا لفظيًا |
+| **بلا شبكة توصيل محتوى** | زمن التشغيل مستضاف ذاتيًا مع الصفحة، وكل ملف يُتحقّق من بصمة sha256 قبل النشر |
+| **أول تشغيل** | ~٣٢ م.ب تُنزَّل مرة واحدة ثم تُخزَّن في المتصفّح — الزيارات التالية تُقلع في ثوانٍ |
+| **بلا تجمّد** | التحويل يجري في `Web Worker` منفصل، والتقدّم يُبثّ صفحةً صفحة |
+| **الإيقاف** | يُنهي الخيط ويُقلع بديلًا من الذاكرة المؤقتة — بايثون داخل Pyodide لا يُقاطَع بلا `SharedArrayBuffer`، وهي تتطلّب ترويستَي COOP/COEP لا ترسلهما GitHub Pages |
+| **الدفعات** | قائمة ملفات كاملة، وتنزيل الناتج مفردًا `.md` أو مجموعًا `.zip` |
+
+كل خيارات `Options` معروضة في الصفحة كما في تطبيق سطح المكتب، وتُحفظ في `localStorage` فلا يُعاد ضبطها كل زيارة.
+
+### التشغيل محليًا
+
+</div>
+
+```bash
+python3 tools/fetch_web_runtime.py   # ينزّل زمن التشغيل إلى web/vendor/ (مرة واحدة)
+python3 tools/serve.py               # http://127.0.0.1:8000
+```
+
+<div dir="rtl">
+
+`web/vendor/` خارج المستودع (٣٢ م.ب من الثنائيات). و`tools/build_site.py` يجمّع `_site/` للنشر، وهو ما يشغّله سير عمل `.github/workflows/pages.yml` عند كل دفعة إلى `main`.
+
+**لتفعيل النشر مرة واحدة:** Settings → Pages → Build and deployment → Source = **GitHub Actions**.
+
+### حدود واجهة الويب
+
+- **البطء**: التنفيذ داخل WebAssembly أبطأ من بايثون الأصلي (٢–٣× تقريبًا). الكتب الكبيرة تُحوَّل أسرع في سطر الأوامر.
+- **الذاكرة**: لسان المتصفّح محدود الذاكرة أكثر من العملية الأصلية — الملفات الضخمة جدًا قد تفشل هنا وتنجح على سطح المكتب.
+- **الحفظ**: الناتج يُنزَّل إلى مجلد التنزيلات، فلا يُكتب بجانب ملف PDF كما في `-o`.
+- **متصفّح حديث** لازم: WebAssembly و`Web Worker` والوحدات النمطية (ES modules).
+
+---
+
 ## ثوابت المعايرة
 
 مستخرَجة من قياس فعلي على ٢٨ ألف فجوة في مستندات حقيقية، وموضعها `src/core.py`:
@@ -273,6 +316,8 @@ python main.py --help
 
 هذا يعني أن تحويل مذكرة أو مرافعة أو وثيقة سرّية لا يخرجها من جهازك. (الاتصال الوحيد بالشبكة في المشروع هو `pip` داخل `run.sh` و`run.bat` عند أول تشغيل لتثبيت المتطلبات.)
 
+**وواجهة الويب ليست استثناءً:** الصفحة تُنزّل محرّكها مرة واحدة ثم تعمل كليًا داخل المتصفّح — الملف لا يُرفع، ولا يوجد خادم تحويل أصلًا. وسياسة أمن المحتوى `connect-src 'self'` تجعل هذا قيدًا يفرضه المتصفّح لا وعدًا في نص.
+
 **قاعدة `-o`:** المسار المنتهي بـ`.md` يُعدّ **ملفًا**، وما عداه يُعدّ **مجلدًا** يُكتب فيه ملف باسم ملف PDF. القاعدة واحدة سواء حوّلت ملفًا أو دفعة.
 
 ---
@@ -290,12 +335,26 @@ PDF2MD/
 ├── pyproject.toml    بيانات الحزمة وإعداد ruff و pytest
 ├── README.md
 ├── LICENSE
+├── index.html        صفحة الويب — تعمل بلا خادم فوق Pyodide
 ├── src/
 │   ├── core.py       محرّك الاستخراج — الرباطات، الاتجاه، الحبر، المسافات، الخلايا
 │   ├── structure.py  طبقة البنية — العناوين، الفقرات، الجداول، الحواشي، الأنماط
-│   ├── common.py     المشترك بين الواجهتين — الحكم التشخيصي ومسار المخرَج
+│   ├── common.py     المشترك بين الواجهات — الحكم التشخيصي ومسار المخرَج
 │   ├── gui.py        واجهة PyQt6
-│   └── cli.py        منطق سطر الأوامر
+│   ├── cli.py        منطق سطر الأوامر
+│   └── web.py        جسر واجهة الويب — يعمل داخل المتصفّح، ويُختبر على CPython
+├── web/
+│   ├── css/styles.css
+│   ├── js/app.js     الواجهة
+│   ├── js/engine.js  غلاف الخيط العامل
+│   ├── js/worker.js  إقلاع Pyodide وتشغيل المحرّك
+│   ├── js/zip.js     كاتب ZIP صغير لتنزيل الدفعة
+│   ├── runtime.json  إصدارات زمن التشغيل وبصماتها — مصدر الحقيقة الوحيد
+│   └── vendor/       زمن التشغيل المُنزَّل — خارج المستودع
+├── tools/
+│   ├── fetch_web_runtime.py  ينزّل Pyodide و numpy و PyMuPDF بصيغة wasm
+│   ├── build_site.py         يجمّع _site/ للنشر
+│   └── serve.py              خادم تطوير محلي
 └── tests/            اختبارات pytest — تعمل تلقائيًا في GitHub Actions
 ```
 
@@ -356,7 +415,9 @@ pytest -q
 
 # PDF2MD — English
 
-A desktop tool that extracts **correct Arabic text** from broken PDFs and converts it to **structured Markdown**.
+A tool that extracts **correct Arabic text** from broken PDFs and converts it to **structured Markdown** — three front-ends over one engine: a CLI, a desktop app, and a **serverless web page**.
+
+🌐 **[Try it in your browser](https://abosalehg-ui.github.io/PDF2MD/)** — no install, no upload: the file never leaves your machine.
 
 ## The problem
 
@@ -407,6 +468,32 @@ python main.py --help                   # all options
 
 On Windows double-click `run.bat`; on Linux/macOS run `./run.sh`. Both locate the project directory themselves and install missing requirements automatically.
 
+## Web interface — no install, no server
+
+**[abosalehg-ui.github.io/PDF2MD](https://abosalehg-ui.github.io/PDF2MD/)**
+
+The page is not a second implementation — it is *the same* one. The `src/*.py` files the CLI and the desktop app run are fetched into the browser and executed there verbatim, on a Python interpreter compiled to WebAssembly ([Pyodide](https://pyodide.org)) with PyMuPDF and numpy in the same form. Output is byte-for-byte identical to `python main.py`, because there is one codebase, not two.
+
+- **Privacy.** The PDF is read in the browser and never uploaded. The page's Content-Security-Policy is `connect-src 'self'` — it has *no permission* to reach any external server, so the promise is enforced by the browser, not by a sentence in a README.
+- **No CDN.** The runtime is self-hosted alongside the page, and every file is sha256-verified before publishing.
+- **First visit** downloads ~32 MB once, then the browser caches it; later visits boot in seconds.
+- **No freezing.** Conversion runs in a `Web Worker`, streaming progress page by page.
+- **Stop** terminates the worker and boots a replacement from cache — Python inside Pyodide cannot be interrupted without a `SharedArrayBuffer`, which needs COOP/COEP headers GitHub Pages does not send.
+- **Batches.** A full file queue, with per-file `.md` download or a combined `.zip`.
+
+Every `Options` field is exposed exactly as in the desktop app and remembered in `localStorage`.
+
+Run it locally:
+
+```bash
+python3 tools/fetch_web_runtime.py   # download the runtime into web/vendor/ (once)
+python3 tools/serve.py               # http://127.0.0.1:8000
+```
+
+`web/vendor/` is git-ignored (32 MB of binaries). `tools/build_site.py` assembles `_site/` for publishing, which is what `.github/workflows/pages.yml` runs on every push to `main`. To enable it once: Settings → Pages → Build and deployment → Source = **GitHub Actions**.
+
+**Limits of the web build:** WebAssembly runs roughly 2–3× slower than native Python, a browser tab has less memory than a native process, output lands in the Downloads folder rather than next to the PDF, and a modern browser (WebAssembly, Web Workers, ES modules) is required.
+
 ## Calibration constants
 
 Located in `src/core.py`:
@@ -441,6 +528,8 @@ Located in `src/core.py`:
 
 Processing is **entirely local**. The tool never touches the network during conversion, uploads nothing, and writes no temporary files. Output goes next to the source PDF unless `-o` says otherwise, and the only thing stored outside the output is the GUI's preferences (profile, output folder, window size) in the user's settings file. Converting a confidential document does not take it off your machine. (The project's only network access is `pip` inside `run.sh` / `run.bat` on first launch.)
 
+**The web build is no exception:** the page downloads its engine once and then runs entirely in the browser — nothing is uploaded, and there is no conversion server to upload to. `connect-src 'self'` makes that a constraint the browser enforces, not a claim in prose.
+
 **The `-o` rule:** a path ending in `.md` is a **file**; anything else is a **directory** that receives a file named after the PDF. The rule is the same for a single file and for a batch.
 
 ## Layout
@@ -454,12 +543,26 @@ PDF2MD/
 ├── pyproject.toml    package metadata, ruff and pytest config
 ├── README.md
 ├── LICENSE
+├── index.html        web page — runs serverless on Pyodide
 ├── src/
 │   ├── core.py       extraction engine — ligatures, direction, ink, spacing, cells
 │   ├── structure.py  structure layer — headings, paragraphs, tables, footnotes, profiles
-│   ├── common.py     shared between CLI and GUI — diagnostics verdict, output paths
+│   ├── common.py     shared across front-ends — diagnostics verdict, output paths
 │   ├── gui.py        PyQt6 interface
-│   └── cli.py        command-line logic
+│   ├── cli.py        command-line logic
+│   └── web.py        browser bridge — runs in the browser, tested on CPython
+├── web/
+│   ├── css/styles.css
+│   ├── js/app.js     the interface
+│   ├── js/engine.js  worker wrapper
+│   ├── js/worker.js  Pyodide boot and engine calls
+│   ├── js/zip.js     small ZIP writer for batch download
+│   ├── runtime.json  runtime versions and checksums — the single source of truth
+│   └── vendor/       downloaded runtime — git-ignored
+├── tools/
+│   ├── fetch_web_runtime.py  downloads Pyodide, numpy and PyMuPDF as wasm
+│   ├── build_site.py         assembles _site/ for publishing
+│   └── serve.py              local development server
 └── tests/            pytest suite — runs automatically in GitHub Actions
 ```
 

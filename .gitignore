@@ -3,3 +3,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# زمن تشغيل الويب — يُنزَّل بـ tools/fetch_web_runtime.py ولا يدخل المستودع
+web/vendor/
+_site/

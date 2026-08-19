@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      كل شيء من المصدر نفسه: لا شبكة توصيل محتوى ولا خادم تحويل. المسموح
+      الوحيد خارج القاعدة هو wasm-unsafe-eval، وهو ما يحتاجه مفسّر بايثون
+      المُصرَّف إلى WebAssembly ليبدأ. و connect-src 'self' هو الضمانة
+      التقنية لوعد الخصوصية: الصفحة لا تملك إذن إرسال ملفك إلى أي مكان.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; base-uri 'self'; form-action 'none';"
+    />
+    <title>PDF2MD — محوّل PDF العربي إلى Markdown</title>
+    <meta
+      name="description"
+      content="استخراج نص عربي سليم من ملفات PDF المعطوبة الرباطات وتحويله إلى Markdown منظَّم — داخل متصفّحك، بلا رفع الملف إلى أي خادم."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%236B4423'/%3E%3Cpath d='M28 22h30l16 16v40a4 4 0 0 1-4 4H28a4 4 0 0 1-4-4V26a4 4 0 0 1 4-4z' fill='%23FAF6EE'/%3E%3Cpath d='M58 22l16 16H58z' fill='%23C9A227'/%3E%3Cpath d='M34 56h32M34 68h22' stroke='%236B4423' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="web/css/styles.css" />
+  </head>
+
+  <body>
+    <a class="skip" href="#main">تخطَّ إلى المحتوى</a>
+
+    <header class="topbar">
+      <div class="brand">
+        <h1>PDF2MD</h1>
+        <p class="tagline">
+          استخراج نص عربي سليم من PDF المعطوب الرباطات، وتحويله إلى Markdown منظَّم
+        </p>
+      </div>
+      <div class="topbar-actions">
+        <span class="chip" id="engineChip" title="إصدارات المحرّك">جارٍ الإقلاع…</span>
+        <button class="icon-btn" id="btnTheme" type="button" aria-label="تبديل المظهر">
+          🌙
+        </button>
+        <a
+          class="icon-btn"
+          href="https://github.com/abosalehg-ui/PDF2MD"
+          rel="noopener noreferrer"
+          target="_blank"
+          aria-label="مستودع المشروع على GitHub"
+        >
+          <svg viewBox="0 0 16 16" width="17" height="17" aria-hidden="true" focusable="false">
+            <path
+              fill="currentColor"
+              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+            />
+          </svg>
+        </a>
+      </div>
+    </header>
+
+    <p class="privacy" role="note">
+      <strong>ملفك لا يغادر جهازك.</strong>
+      المحرّك نفسه الذي يعمل في تطبيق سطح المكتب يعمل هنا داخل المتصفّح، والصفحة
+      لا تملك إذن الاتصال بأي خادم خارجي.
+    </p>
+
+    <!-- لوحة الإقلاع: تُخفى بعد جهوز المحرّك -->
+    <section class="boot" id="bootPanel" aria-live="polite">
+      <div class="boot-row">
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="bootMsg">تحضير محرّك التحويل… (يُنزَّل مرّة واحدة ثم يُخزَّن في المتصفّح)</span>
+      </div>
+      <div class="bar"><div class="bar-fill" id="bootBar"></div></div>
+    </section>
+
+    <main id="main" class="layout" hidden>
+      <!-- ═══ عمود التحكّم ═══ -->
+      <div class="col controls">
+        <section class="card">
+          <h2>الملفات</h2>
+
+          <div class="drop" id="dropZone" tabindex="0" role="button"
+               aria-label="أضف ملفات PDF — بالنقر أو بالسحب والإفلات">
+            <div class="drop-icon" aria-hidden="true">📄</div>
+            <p><strong>اسحب ملفات PDF وأفلتها هنا</strong></p>
+            <p class="muted">أو انقر للاختيار من جهازك</p>
+            <input id="fileInput" type="file" accept="application/pdf,.pdf" multiple hidden />
+          </div>
+
+          <ul class="files" id="fileList" aria-label="قائمة ملفات PDF المراد تحويلها"></ul>
+
+          <div class="row end">
+            <button class="ghost" id="btnClear" type="button" disabled>تفريغ القائمة</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>الخيارات</h2>
+
+          <div class="field">
+            <label for="optProfile">نمط المستند</label>
+            <select id="optProfile">
+              <option value="auto">تلقائي — كشف العناوين بحجم الخط</option>
+              <option value="saudi_law">نظام/لائحة سعودية — الباب والفصل والمادة</option>
+              <option value="plain">نص عادي — فقرات بلا عناوين</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="optTitle">العنوان الرئيسي</label>
+            <input id="optTitle" type="text" placeholder="اتركه فارغًا لبلا عنوان" />
+          </div>
+
+          <div class="field">
+            <label for="optFootnotes">الحواشي</label>
+            <select id="optFootnotes">
+              <option value="quote">اقتباس منفصل &gt;</option>
+              <option value="inline">ضمن النص</option>
+              <option value="drop">حذف</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <span class="label">مستوى العناوين</span>
+            <div class="inline">
+              <label for="optHTop">رئيسي</label>
+              <input id="optHTop" type="number" min="1" max="6" value="2" />
+              <label for="optHSub">فرعي</label>
+              <input id="optHSub" type="number" min="1" max="6" value="3" />
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="label">نطاق الصفحات</span>
+            <div class="inline">
+              <label for="optFrom">من</label>
+              <input id="optFrom" type="number" min="0" value="0" />
+              <label for="optTo">إلى</label>
+              <input id="optTo" type="number" min="0" value="0" />
+              <span class="muted">(0 = الكل)</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="optGap">فجوة الفقرة</label>
+            <div class="inline">
+              <input id="optGap" type="number" min="0.1" max="5" step="0.05" value="0.75" />
+              <span class="muted">× ارتفاع السطر</span>
+            </div>
+          </div>
+
+          <div class="checks">
+            <label><input id="optLig" type="checkbox" checked /> إصلاح الرباطات المقلوبة</label>
+            <label><input id="optInk" type="checkbox" checked /> فحص الحبر — أدق، أبطأ ٣×</label>
+            <label><input id="optDigits" type="checkbox" checked /> توحيد الأرقام الهندية ← عربية</label>
+            <label><input id="optHeaders" type="checkbox" checked /> حذف الترويسة والتذييل المتكررة</label>
+            <label><input id="optWatermark" type="checkbox" checked /> حذف العلامة المائية — نص مائل أو باهت</label>
+            <label><input id="optDropToc" type="checkbox" checked /> تخطّي صفحات الفهرس الأصلية</label>
+            <label><input id="optBuildToc" type="checkbox" checked /> توليد فهرس تلقائي بروابط داخلية</label>
+            <label><input id="optTables" type="checkbox" checked /> بناء جداول Markdown من صفوف الجداول</label>
+          </div>
+
+          <div class="row end">
+            <button class="ghost" id="btnReset" type="button">استعادة الافتراضي</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- ═══ عمود النتائج ═══ -->
+      <div class="col results">
+        <section class="card actions">
+          <div class="row">
+            <button class="primary" id="btnGo" type="button" disabled>تحويل</button>
+            <button class="gold" id="btnDiag" type="button" disabled>فحص تشخيصي</button>
+            <button class="ghost" id="btnStop" type="button" disabled>إيقاف</button>
+          </div>
+          <div class="bar"><div class="bar-fill" id="jobBar"></div></div>
+          <p class="status" id="status" role="status">
+            جاهز — اسحب ملفات PDF إلى القائمة أو اضغط على منطقة الإضافة
+          </p>
+        </section>
+
+        <section class="card grow">
+          <div class="tabs" role="tablist">
+            <button role="tab" id="tabPreview" aria-controls="panePreview" aria-selected="true">
+              معاينة الناتج
+            </button>
+            <button role="tab" id="tabDiag" aria-controls="paneDiag" aria-selected="false">
+              التشخيص
+            </button>
+            <button role="tab" id="tabLog" aria-controls="paneLog" aria-selected="false">
+              السجل
+            </button>
+          </div>
+
+          <div class="pane" id="panePreview" role="tabpanel" aria-labelledby="tabPreview">
+            <div class="row wrap out-bar">
+              <label class="sr-only" for="outPick">الملف المعروض</label>
+              <select id="outPick" disabled></select>
+              <button class="ghost" id="btnDownload" type="button" disabled>تنزيل ‎.md</button>
+              <button class="ghost" id="btnDownloadAll" type="button" disabled>تنزيل الكل ‎.zip</button>
+              <button class="ghost" id="btnCopy" type="button" disabled>نسخ</button>
+            </div>
+            <p class="muted" id="previewNote" hidden></p>
+            <pre class="output" id="preview">الناتج يظهر هنا بعد التحويل.</pre>
+          </div>
+
+          <div class="pane" id="paneDiag" role="tabpanel" aria-labelledby="tabDiag" hidden>
+            <p id="diagInfo" class="muted">
+              شغّل «فحص تشخيصي» لمعرفة حالة الملف قبل التحويل.
+            </p>
+            <p id="diagVerdict" class="verdict" hidden></p>
+            <div class="table-wrap">
+              <table id="diagTable" hidden>
+                <thead>
+                  <tr>
+                    <th>الكلمة</th>
+                    <th>سليمة قبل</th>
+                    <th>تالفة قبل</th>
+                    <th>سليمة بعد</th>
+                    <th>تالفة بعد</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div id="diagSampleWrap" hidden>
+              <h3>عيّنة من النص بعد الإصلاح:</h3>
+              <pre class="output short" id="diagSample"></pre>
+            </div>
+          </div>
+
+          <div class="pane" id="paneLog" role="tabpanel" aria-labelledby="tabLog" hidden>
+            <pre class="output" id="log"></pre>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="foot">
+      <span>PDF2MD — المحرّك نفسه في سطر الأوامر وسطح المكتب والمتصفّح.</span>
+      <a href="https://github.com/abosalehg-ui/PDF2MD" rel="noopener noreferrer" target="_blank">
+        المستودع ورخصة MIT
+      </a>
+    </footer>
+
+    <script type="module" src="web/js/app.js"></script>
+  </body>
+</html>

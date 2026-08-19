@@ -1,0 +1,23 @@
+{
+  "_comment": "مصدر الحقيقة الوحيد لإصدارات زمن التشغيل في المتصفح. يقرؤه tools/fetch-web-runtime.sh عند التنزيل، و web/js/worker.js عند الإقلاع. تغيير الإصدار هنا وحده يكفي — بشرط تحديث sha256 معه.",
+  "pyodide": "0.28.3",
+  "core": {
+    "url": "https://github.com/pyodide/pyodide/releases/download/0.28.3/pyodide-core-0.28.3.tar.bz2",
+    "sha256": "46fd28bfacd5b78333d73f171412cc992a2cab2332b067e4d2181fd255cca730"
+  },
+  "wheels": [
+    {
+      "name": "numpy",
+      "file": "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "url": "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl",
+      "sha256": "3db3c4f3e0448f4d62a85c262692f1260ccd8a91335442bd2442f21ffeddb558"
+    },
+    {
+      "name": "pymupdf",
+      "file": "pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl",
+      "url": "https://files.pythonhosted.org/packages/58/8c/d897dcd32a25b58186c968b15ce4324ca029e9d96460de12325314e390be/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl",
+      "sha256": "2e1b574c0fd2cb238021033fd3c0f9c4388816638df064e4bfb56d9d81736dc8"
+    }
+  ],
+  "sources": ["__init__.py", "common.py", "core.py", "structure.py", "web.py"]
+}
