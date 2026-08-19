@@ -2,9 +2,16 @@ name: pages
 
 # ينشر واجهة الويب على GitHub Pages.
 #
-# لا يحتاج تهيئة يدوية: خطوة configure-pages أدناه تفعّل Pages بنفسها عند
-# أول تشغيل (enablement: true). ولو مُنع ذلك بسياسة المؤسسة، فالتفعيل يدويًا:
+# ⚠ خطوة يدوية لازمة مرة واحدة قبل أول نشرة ناجحة:
 #   Settings → Pages → Build and deployment → Source = GitHub Actions
+#
+# ولا سبيل إلى أتمتتها من هنا: تفعيل Pages يمرّ بواجهة
+# «Create a GitHub Pages site» وهي تطلب صلاحية إدارة المستودع
+# (administration: write)، و GITHUB_TOKEN لا يملكها ولا تُمنح له. جُرّبت
+# `enablement: true` على هذا المستودع فعلًا فردّت:
+#   Create Pages site failed. Error: Resource not accessible by integration
+# فأُزيلت: أتمتةٌ لا تعمل تُبدّل رسالة خطأ واضحة تقول «فعّل Pages» برسالة
+# غامضة تقول «مورد غير متاح».
 
 on:
   push:
@@ -54,13 +61,10 @@ jobs:
       - name: بناء الموقع
         run: python3 tools/build_site.py --fetch
 
-      # enablement يفعّل Pages على المستودع إن لم يكن مفعّلًا، ويجعل مصدره
-      # سير العمل هذا. بدونه تسقط النشرة الأولى بـ«Get Pages site failed»
-      # على مستودع لم يُفعَّل فيه Pages يدويًا — وهو ما حدث فعلًا في أول
-      # نشرة بعد الدمج.
+      # تسقط هنا برسالة صريحة إن لم يكن Pages مفعّلًا على المستودع — انظر
+      # الخطوة اليدوية في أعلى الملف. السقوط مقصود: نشرةٌ تمضي وتترك الموقع
+      # غير منشور أسوأ من نشرة تقف وتقول السبب.
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
