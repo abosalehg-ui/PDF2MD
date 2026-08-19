@@ -263,7 +263,9 @@ python3 tools/serve.py               # http://127.0.0.1:8000
 
 `web/vendor/` خارج المستودع (٣٢ م.ب من الثنائيات). و`tools/build_site.py` يجمّع `_site/` للنشر، وهو ما يشغّله سير عمل `.github/workflows/pages.yml` عند كل دفعة إلى `main`.
 
-النشر لا يحتاج تهيئة يدوية: خطوة `configure-pages` تفعّل Pages بنفسها عند أول تشغيل. ولو منعت ذلك سياسة المؤسسة، فالتفعيل يدويًا من Settings → Pages → Build and deployment → Source = **GitHub Actions**.
+**خطوة يدوية لازمة مرة واحدة قبل أول نشرة:** Settings → Pages → Build and deployment → Source = **GitHub Actions**.
+
+لا سبيل إلى أتمتتها: تفعيل Pages يمرّ بواجهة تطلب صلاحية إدارة المستودع (`administration: write`)، و`GITHUB_TOKEN` لا يملكها ولا تُمنح له — فالخيار `enablement: true` في `configure-pages` يردّ `Resource not accessible by integration`. بدون هذه الخطوة تسقط النشرة برسالة `Get Pages site failed`، وكل ما قبلها يكون قد نجح.
 
 ### حدود واجهة الويب
 
@@ -490,7 +492,9 @@ python3 tools/fetch_web_runtime.py   # download the runtime into web/vendor/ (on
 python3 tools/serve.py               # http://127.0.0.1:8000
 ```
 
-`web/vendor/` is git-ignored (32 MB of binaries). `tools/build_site.py` assembles `_site/` for publishing, which is what `.github/workflows/pages.yml` runs on every push to `main`. No manual setup is needed — the `configure-pages` step enables Pages itself on the first run; if org policy blocks that, enable it under Settings → Pages → Build and deployment → Source = **GitHub Actions**.
+`web/vendor/` is git-ignored (32 MB of binaries). `tools/build_site.py` assembles `_site/` for publishing, which is what `.github/workflows/pages.yml` runs on every push to `main`.
+
+**One manual step is required once, before the first deploy:** Settings → Pages → Build and deployment → Source = **GitHub Actions**. It cannot be automated — creating a Pages site needs `administration: write`, which `GITHUB_TOKEN` never has (`enablement: true` returns `Resource not accessible by integration`). Until it is done the deploy fails at `Get Pages site failed`, with every step before it having succeeded.
 
 **Limits of the web build:** WebAssembly runs roughly 2–3× slower than native Python, a browser tab has less memory than a native process, output lands in the Downloads folder rather than next to the PDF, and a modern browser (WebAssembly, Web Workers, ES modules) is required.
 

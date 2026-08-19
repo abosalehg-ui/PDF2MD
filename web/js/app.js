@@ -84,7 +84,12 @@ function download(blob, name) {
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  $('btnTheme').textContent = theme === 'dark' ? '☀️' : '🌙';
+  // الأيقونة تبدّلها CSS من سمة data-theme؛ ما يبقى لجافاسكربت هو الاسم
+  // المنطوق، ويصف **الفعل** لا الحالة — قارئ الشاشة يقرأ زرًا لا صورة.
+  $('btnTheme').setAttribute(
+    'aria-label',
+    theme === 'dark' ? 'التبديل إلى المظهر الفاتح' : 'التبديل إلى المظهر الداكن',
+  );
   try {
     localStorage.setItem(STORE_THEME, theme);
   } catch (err) {
