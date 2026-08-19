@@ -144,7 +144,10 @@ h3 {
   border-radius: 999px;
   width: 38px;
   height: 38px;
-  font-size: 16px;
+  /* تصفير لازم لا زخرفة: قاعدة `button` العامة تعطي padding: 9px 18px،
+     ومع box-sizing: border-box وعرض ثابت ٣٨px يصير صندوق المحتوى ٢px
+     فيفيض الرمز خارج الدائرة. الرابط المجاور لم يُصب لأنه <a> لا <button>. */
+  padding: 0;
   line-height: 1;
   cursor: pointer;
   display: grid;
@@ -153,6 +156,27 @@ h3 {
 }
 .icon-btn:hover {
   background: var(--head);
+}
+
+/* أيقونات مرسومة لا رموز تعبيرية: الرمز التعبيري يأتي بقياس خطّ النظام
+   فيختلف حجمه بين ويندوز وماك وأندرويد، ولا يقبل `color` فيبقى ملوّنًا
+   خارج لوحة الأداة. وSVG يرث currentColor فيتبدّل مع المظهر. */
+.icon-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* الأيقونتان معًا في الزر، وCSS تُظهر واحدة. المحدِّدات مُقيَّدة بـ.icon-btn
+   عمدًا: `.i-sun` وحدها (0,1,0) أضعف من `.icon-btn svg` (0,1,1)، فكان
+   display:none لا يُطبَّق وتظهر الأيقونتان فوق بعضهما في الوضع النهاري. */
+.icon-btn .i-sun {
+  display: none;
+}
+[data-theme='dark'] .icon-btn .i-moon {
+  display: none;
+}
+[data-theme='dark'] .icon-btn .i-sun {
+  display: block;
 }
 
 .privacy {
