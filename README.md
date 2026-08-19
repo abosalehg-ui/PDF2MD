@@ -267,6 +267,35 @@ python3 tools/serve.py               # http://127.0.0.1:8000
 
 لا سبيل إلى أتمتتها: تفعيل Pages يمرّ بواجهة تطلب صلاحية إدارة المستودع (`administration: write`)، و`GITHUB_TOKEN` لا يملكها ولا تُمنح له — فالخيار `enablement: true` في `configure-pages` يردّ `Resource not accessible by integration`. بدون هذه الخطوة تسقط النشرة برسالة `Get Pages site failed`، وكل ما قبلها يكون قد نجح.
 
+### النشر على Vercel (بديل اختياري)
+
+الموقع ينشر نفسه على GitHub Pages، ويعمل على Vercel كذلك بلا تغيير في الشيفرة. `vercel.json` في الجذر هو كل ما يلزم:
+
+</div>
+
+```json
+{
+  "framework": null,
+  "installCommand": "",
+  "buildCommand": "python3 tools/build_site.py --fetch",
+  "outputDirectory": "_site"
+}
+```
+
+<div dir="rtl">
+
+**لماذا `framework: null` تحديدًا:** بدونه يرى Vercel ملفَّ `main.py` في الجذر فيظنّ المشروع تطبيق بايثون (Flask/FastAPI) ويبحث فيه عن متغيّر `app`، فيسقط النشر بـ:
+
+```
+Error: Found main.py but it does not export a top-level "app", "application", or "handler" variable.
+```
+
+و`null` هو ما توثّقه Vercel لاختيار «Other» أي بلا إطار. أما `installCommand` الفارغ فيتخطّى تثبيت الاعتماديات: البناء لا يحتاج إلا بايثون، وهو موجود في صورة Vercel (٣٫١٢ فما فوق)، و`tools/build_site.py` لا يستورد خارج المكتبة القياسية.
+
+**تحذير:** مخطَّط `vercel.json` يرفض أي مفتاح مجهول (`additionalProperties: false`)، والبناء عندها يسقط **بلا سجلّات**. فلا تُضف تعليقات بصيغة `"//"` — لا يقبلها. ويحرس `tests/test_web.py` الملفَّ: يتحقّق أن `outputDirectory` يطابق ما يكتبه سكربت البناء فعلًا، وأن `framework` ما زال `null`.
+
+المنصّتان تبنيان بالسكربت نفسه، فمخرَجهما واحد لا نسختان تتباعدان.
+
 ### حدود واجهة الويب
 
 - **البطء**: التنفيذ داخل WebAssembly أبطأ من بايثون الأصلي (٢–٣× تقريبًا). الكتب الكبيرة تُحوَّل أسرع في سطر الأوامر.
@@ -495,6 +524,25 @@ python3 tools/serve.py               # http://127.0.0.1:8000
 `web/vendor/` is git-ignored (32 MB of binaries). `tools/build_site.py` assembles `_site/` for publishing, which is what `.github/workflows/pages.yml` runs on every push to `main`.
 
 **One manual step is required once, before the first deploy:** Settings → Pages → Build and deployment → Source = **GitHub Actions**. It cannot be automated — creating a Pages site needs `administration: write`, which `GITHUB_TOKEN` never has (`enablement: true` returns `Resource not accessible by integration`). Until it is done the deploy fails at `Get Pages site failed`, with every step before it having succeeded.
+
+### Deploying on Vercel (optional)
+
+The site deploys itself to GitHub Pages, and works on Vercel too with no code change. A `vercel.json` at the root is all it takes:
+
+```json
+{
+  "framework": null,
+  "installCommand": "",
+  "buildCommand": "python3 tools/build_site.py --fetch",
+  "outputDirectory": "_site"
+}
+```
+
+`framework: null` is the load-bearing part. Without it Vercel sees `main.py` at the root, assumes a Python web app, and looks for an `app` variable — failing with `Found main.py but it does not export a top-level "app", "application", or "handler" variable.` `null` is Vercel's documented value for the "Other" preset. The empty `installCommand` skips dependency installation: the build needs only Python, which ships in Vercel's build image (3.12+), and `tools/build_site.py` imports nothing outside the standard library.
+
+Note that the `vercel.json` schema sets `additionalProperties: false` — one unknown key fails the build *with no logs at all*, so `"//"` comment keys are not an option. `tests/test_web.py` guards the file: it checks that `outputDirectory` matches what the build script actually writes, and that `framework` is still `null`.
+
+Both platforms build with the same script, so their output is one thing, not two that drift.
 
 **Limits of the web build:** WebAssembly runs roughly 2–3× slower than native Python, a browser tab has less memory than a native process, output lands in the Downloads folder rather than next to the PDF, and a modern browser (WebAssembly, Web Workers, ES modules) is required.
 
