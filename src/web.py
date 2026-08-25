@@ -193,6 +193,14 @@ def diagnose_file(path, progress=None, name=None):
         verdict = ("الملف مصوّر بلا طبقة نص — يحتاج OCR قبل التحويل."
                    if data["needs_ocr"] else "لا توجد طبقة نص في هذا الملف.")
         healthy = False
+    elif data.get("broken"):
+        # طبقة نص كاملة لكن محتواها معطوب. لا OCR في المتصفّح — تشغيل
+        # Tesseract يحتاج ثنائيًا لا وجود له في Pyodide — فالصدق هنا أن
+        # نقول للمستخدم أين يحوّله بدل أن نسلّمه ناتجًا خاويًا بلا سبب.
+        verdict = (f"طبقة النص معطوبة ({data['broken_why']}) — "
+                   f"حوّل الملف من سطر الأوامر أو الواجهة الرسومية "
+                   f"مع Tesseract للحصول على نص سليم.")
+        healthy = False
 
     # pairs يصل من diagnose قائمةَ tuple، وJSON يحوّلها قوائم من عنصرين.
     # نجعلها dict صريحة لأن الواجهة تقرؤها بالاسم لا بالموضع.

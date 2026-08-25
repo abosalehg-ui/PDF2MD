@@ -268,8 +268,14 @@ def test_page_option_ids_cover_every_engine_option():
     """
     كل خيار في Options له عنصر في الصفحة. الخيار الذي يُضاف إلى المحرّك
     ولا يُعرض في الواجهة يبقى على قيمته الافتراضية أبدًا بلا أن يلاحظ أحد.
+
+    خيارات الـOCR وحدها مستثناة: تشغيلها يحتاج ثنائي Tesseract، ولا وجود
+    له داخل Pyodide. عرضها في المتصفّح يعد بما لا يُنفَّذ، فتبقى خارج
+    الصفحة كما بقيت gui.py وcli.py خارج بيان المصادر.
     """
     with open(os.path.join(ROOT, "web", "js", "app.js"), encoding="utf-8") as f:
         app = f.read()
     for field in vars(Options()):
+        if field.startswith("ocr"):
+            continue
         assert f"  {field}: {{ el: " in app, f"الخيار {field} غير معروض"
