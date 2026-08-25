@@ -124,17 +124,28 @@ h3 {
 
 .topbar-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
 }
 
+/* الرقاقة تحمل نصًّا متغيّر الطول: «جارٍ الإقلاع…» عند الإقلاع، ثم سطر
+   الإصدارات الطويل بعد جهوز المحرّك. مع `nowrap` كان السطر الطويل يدفع
+   زرّي المظهر وGitHub خارج إطار الشاشة على الجوال، فصار النص يلتفّ
+   والرقاقة تتقلّص بدل أن تفيض. */
 .chip {
   background: var(--head);
   color: var(--brown);
   border-radius: 999px;
   padding: 4px 12px;
   font-size: 13px;
-  white-space: nowrap;
+  text-align: center;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .icon-btn {
@@ -153,6 +164,8 @@ h3 {
   display: grid;
   place-items: center;
   text-decoration: none;
+  /* الأزرار لا تتقلّص أبدًا: تقلّصها يشوّه الدائرة ويقصّ الأيقونة. */
+  flex: none;
 }
 .icon-btn:hover {
   background: var(--head);
@@ -262,6 +275,27 @@ h3 {
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;
+  }
+}
+
+/* على شاشات الجوال تُكدَّس الترويسة: العنوان والوصف سطرًا، ثم صفّ الأدوات
+   كاملًا تحته، فلا يتنافس النصّان على عرض واحد ضيّق. */
+@media (max-width: 560px) {
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .topbar-actions {
+    justify-content: flex-start;
+  }
+
+  /* الزرّان أوّلًا في صفّ واحد، ثم الرقاقة بعرض كامل تحتهما: بغير هذا
+     تبتلع الرقاقة الطويلة الصفّ وينزل زرّ GitHub وحده في سطر تالٍ. */
+  .topbar-actions .chip {
+    order: 2;
+    flex-basis: 100%;
   }
 }
 
