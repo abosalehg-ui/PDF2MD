@@ -48,6 +48,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import ocr as ocr_engine
 from .common import ensure_parent, out_path_for, stats_summary, verdict_of
 from .core import __version__
 from .structure import ConversionCancelled, Options, convert, diagnose
@@ -161,6 +162,11 @@ PROFILES = [
     ("تلقائي — كشف العناوين بحجم الخط", "auto"),
     ("نظام/لائحة سعودية — الباب والفصل والمادة", "saudi_law"),
     ("نص عادي — فقرات بلا عناوين", "plain"),
+]
+OCR_MODES = [
+    ("تلقائي — الصفحة المعطوبة أو الممسوحة وحدها", "auto"),
+    ("بلا OCR — طبقة النص الأصلية دائمًا", "never"),
+    ("دائمًا — كل الصفحات (بطيء)", "always"),
 ]
 FOOTNOTES = [
     ("اقتباس منفصل  >", "quote"),
@@ -472,6 +478,19 @@ class MainWindow(QMainWindow):
         gl.addLayout(hr3, r, 1)
         r += 1
 
+        self.cb_ocr = QComboBox()
+        self.cb_ocr.addItems([name for name, _ in OCR_MODES])
+        gl.addWidget(QLabel("قراءة ضوئية (OCR)"), r, 0)
+        gl.addWidget(self.cb_ocr, r, 1)
+        r += 1
+        if not ocr_engine.available():
+            self.cb_ocr.setEnabled(False)
+            note = QLabel("Tesseract غير مثبَّت — الصفحات الممسوحة ضوئيًا "
+                          "والملفات ذات خريطة الخط المكسورة ستخرج ناقصة.")
+            note.setWordWrap(True)
+            gl.addWidget(note, r, 0, 1, 2)
+            r += 1
+
         self.ck_lig = QCheckBox("إصلاح الرباطات المقلوبة")
         self.ck_ink = QCheckBox("فحص الحبر — أدق، أبطأ ٣×")
         self.ck_dig = QCheckBox("توحيد الأرقام الهندية ← عربية")
@@ -664,6 +683,7 @@ class MainWindow(QMainWindow):
         s = self._settings
         self.cb_profile.setCurrentIndex(self._num("profile", 0))
         self.cb_foot.setCurrentIndex(self._num("footnotes", 0))
+        self.cb_ocr.setCurrentIndex(self._num("ocr", 0))
         self.ed_out.setText(s.value("out_dir", "", type=str))
         self.sp_top.setValue(self._num("h_top", 2))
         self.sp_sub.setValue(self._num("h_sub", 3))
@@ -681,6 +701,7 @@ class MainWindow(QMainWindow):
         s = self._settings
         s.setValue("profile", self.cb_profile.currentIndex())
         s.setValue("footnotes", self.cb_foot.currentIndex())
+        s.setValue("ocr", self.cb_ocr.currentIndex())
         s.setValue("out_dir", self.ed_out.text().strip())
         s.setValue("h_top", self.sp_top.value())
         s.setValue("h_sub", self.sp_sub.value())
@@ -715,6 +736,9 @@ class MainWindow(QMainWindow):
             h_top=self.sp_top.value(),
             h_sub=self.sp_sub.value(),
             para_gap=self.sp_gap.value(),
+            # القائمة معطَّلة حين لا يوجد Tesseract، فتبقى على "تلقائي"
+            # ويتكفّل المحرّك بالتحذير مرة واحدة في سجلّ التحويل.
+            ocr=OCR_MODES[self.cb_ocr.currentIndex()][1],
         )
 
     def start_worker(self, worker):

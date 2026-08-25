@@ -24,6 +24,10 @@ except ImportError:                     # PyMuPDF < 1.24.3
 
 from . import core
 
+# باسم مستعار: الحقل `Options.ocr` يظلّل الاسم داخل جسم الفئة، فيقرأ
+# `ocr.OCR_LANG` من السلسلة "auto" لا من الوحدة.
+from . import ocr as ocr_engine
+
 
 class ConversionCancelled(Exception):
     """أُلغي التحويل بطلب من المستخدم — ليست حالة خطأ."""
@@ -51,6 +55,9 @@ class Options:
     h_top: int = 2                 # مستوى العناوين العليا
     h_sub: int = 3                 # مستوى العناوين الفرعية
     para_gap: float = 0.75         # فجوة رأسية (× ارتفاع السطر) تبدأ فقرة
+    ocr: str = "auto"              # auto | never | always — انظر ocr.py
+    ocr_lang: str = ocr_engine.OCR_LANG   # لغات Tesseract مفصولة بـ+
+    ocr_dpi: int = ocr_engine.OCR_DPI     # دقة رسم الصفحة قبل التمييز
 
 
 # ═══════════════════════ الأنماط ═══════════════════════
@@ -329,16 +336,51 @@ def _extract_pages(doc, opt, lo, hi, st, say, tick, cancel):
             f"المطلوبة تنمو مع عدد الصفحات. لتحويل جزء استعمل نطاق "
             f"الصفحات، وللتسريع ٣× عطّل فحص الحبر.")
 
+    ready = opt.ocr != "never" and ocr_engine.available()
+    warned = False
+
     pages = []
     for k, i in enumerate(range(lo, hi + 1)):
         if cancel is not None and cancel.is_set():
             raise ConversionCancelled("أُلغي التحويل.")
         page = doc[i]
-        lines = core.page_lines(page, st,
-                                unify_digits=opt.unify_digits,
-                                check_ink=opt.check_ink,
-                                fix_ligatures=opt.fix_ligatures,
-                                drop_watermark=opt.drop_watermark)
+
+        lines = None
+        if opt.ocr != "never":
+            if opt.ocr == "always":
+                want, why = True, "بطلب صريح"
+            else:
+                want, why = ocr_engine.page_verdict(page)
+            if want and not ready:
+                if not warned:
+                    say("⚠ " + ocr_engine.why_unavailable())
+                    warned = True
+                st["ocr_missed"] += 1
+            elif want:
+                lines = ocr_engine.page_lines(page, dpi=opt.ocr_dpi,
+                                       language=opt.ocr_lang)
+                if lines is None:
+                    st["ocr_missed"] += 1
+                    say(f"⚠ تعذّر تشغيل OCR على ص {i + 1} — "
+                        f"بقيت على طبقة نصها الأصلية.")
+                else:
+                    st["ocr"] += 1
+                    say(f"OCR ص {i + 1}: {why}.")
+
+        # ناتج الـOCR يصل مبنيًا أسطرًا جاهزة، ولا يمرّ على `core.page_lines`:
+        # إصلاحات ذاك المسار (الرباط المقلوب، المسافة الوهمية، التشكيل
+        # الطائر) كلها علل مجرى نص الـPDF، ولا مجرى نص في صفحة مقروءة من
+        # بكسلاتها — تطبيقها هناك يفسد سليمًا لا يُصلح فاسدًا.
+        if lines is None:
+            lines = core.page_lines(page, st,
+                                    unify_digits=opt.unify_digits,
+                                    check_ink=opt.check_ink,
+                                    fix_ligatures=opt.fix_ligatures,
+                                    drop_watermark=opt.drop_watermark)
+        elif opt.unify_digits:
+            for line in lines:
+                line["text"] = line["text"].translate(core.AR2WEST)
+
         pages.append((i, lines, page.rect.height))
         if k % 5 == 0 or k == total - 1:
             tick(int(70 * (k + 1) / total), f"استخراج ص {i + 1} / {hi + 1}")
@@ -505,11 +547,18 @@ def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
         total = hi - lo + 1
         st = {"lig": 0, "pairs": {}, "pages": total, "toc_skipped": 0,
               "headings": 0, "notes": 0, "chars": 0, "tables": 0,
-              "watermark": 0}
+              "watermark": 0, "ocr": 0, "ocr_missed": 0, "yeh": 0}
 
         # ── ١) الاستخراج ──
         pages = _extract_pages(doc, opt, lo, hi, st, say, tick, cancel)
         say(f"استُخرجت {total} صفحة — أُصلح {st['lig']:,} رباطًا مقلوبًا.")
+        if st["yeh"]:
+            say(f"أُصلحت {st['yeh']:,} ياء مكسورة (مسافة + تنوين).")
+        if st["ocr"]:
+            say(f"قُرئت {st['ocr']:,} صفحة بالـOCR — طبقة نصها معطوبة.")
+        if st["ocr_missed"]:
+            say(f"⚠ {st['ocr_missed']:,} صفحة طبقة نصها معطوبة ولم تُقرأ "
+                f"بالـOCR — ناتجها ناقص أو خاوٍ.")
         if st["watermark"]:
             say(f"حُذفت علامة مائية: {st['watermark']:,} جزء نصي مائل أو باهت.")
 
@@ -564,6 +613,7 @@ def diagnose(pdf_path, sample_every=7, progress=None, cancel=None):
 
     يرجّع dict فيه:
       pages / sampled / has_text / needs_ocr — بيانات الملف
+      broken / broken_why / ocr_ready        — صفحات العيّنة المعطوبة طبقتها
       ligatures / pairs                      — الرباطات المُصلَحة وأنواعها
       rows                                   — جدول قبل/بعد للكلمات المؤشّرة
       sample / raw_sample                    — عيّنة نص بعد وقبل الإصلاح
@@ -596,13 +646,26 @@ def diagnose(pdf_path, sample_every=7, progress=None, cancel=None):
 
         has_text = bool(raw.strip())
         images = any(doc[i].get_images() for i in idx)
+
+        # «فيه طبقة نص» لا يعني «طبقته صالحة»: الملف ذو خريطة الخط المكسورة
+        # يمرّ بطبقة نص كاملة نصُّها حروف لاتينية عشوائية، وكان التشخيص
+        # يحكم عليه بالسلامة لأن الرباطات فيه سليمة — ولا رباط أصلًا.
+        broken, broken_why = [], ""
+        for i in idx:
+            want, why = ocr_engine.page_verdict(doc[i])
+            if want:
+                broken.append(i + 1)
+                broken_why = broken_why or why
         fonts = doc[idx[len(idx) // 2]].get_fonts() if idx else []
 
         return {
             "pages": len(doc),
             "sampled": len(idx),
             "has_text": has_text,
-            "needs_ocr": (not has_text) and images,
+            "needs_ocr": ((not has_text) and images) or bool(broken),
+            "broken": broken,
+            "broken_why": broken_why,
+            "ocr_ready": ocr_engine.available(),
             "ligatures": st["lig"],
             "pairs": sorted(st["pairs"].items(), key=lambda x: -x[1])[:8],
             "rows": rows,

@@ -19,5 +19,5 @@
       "sha256": "2e1b574c0fd2cb238021033fd3c0f9c4388816638df064e4bfb56d9d81736dc8"
     }
   ],
-  "sources": ["__init__.py", "common.py", "core.py", "structure.py", "web.py"]
+  "sources": ["__init__.py", "common.py", "core.py", "ocr.py", "structure.py", "web.py"]
 }

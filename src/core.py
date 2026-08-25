@@ -16,6 +16,11 @@ core.py — محرّك الاستخراج في PDF2MD.
   4. مسافة مفقودة   : لا مسافة في المجرى          -> قاعدة الفجوة
   5. رقم معكوس      : LTR داخل RTL               -> عكس التسلسل (6/5/1436 → 1436/6/5)
   6. تشكيل طائر     : يسبق حرفه في المجرى         -> ربط إحداثي  (يوما.ً → يوماً.)
+  7. ياء مكسورة     : ياء = مسافة + تنوين بعرض صفر -> نضمّها      (تف ٌد → تفيد)
+
+ما لا يُصلَح هنا: خريطة ToUnicode المكسورة كليًا (الجليف العربي يخرج حرفًا
+لاتينيًا عشوائيًا) والصفحة الممسوحة ضوئيًا. لا معلومة في المجرى تُنقذهما،
+فمكانهما `ocr.py` الذي يعيد قراءة الصفحة من بكسلاتها.
 """
 
 import re
@@ -70,6 +75,17 @@ WM_ALPHA = 0.60
 WM_LUMA = 0.62
 # انحراف اتجاه السطر عن الأفق أكبر من هذا = سطر مائل لا ينتمي للمتن
 WM_TILT = 0.08
+
+# ═══════════════ الياء المكسورة ═══════════════
+# بعض المولِّدات ترسم الياء بجليفين: قاعدة مهملة النقط تُصدَّر مسافةً بعرض
+# حقيقي، والنقطتان تُصدَّران تنوينًا بعرض صفر. الناتج «تف ٌد» بدل «تفيد».
+# رُصد الحرفان معًا في الملف الواحد: تنوين الضم للياء الوسطية وتنوين الفتح
+# للياء الأخيرة.
+YEH_DOTS = frozenset("\u064b\u064c")
+# النقطتان تُرسمان عند حافة القاعدة الأولى. أما التشكيل الطائر الحقيقي —
+# وهو علّة أخرى يعالجها المسار بربط إحداثي — فيقع عند الحافة المقابلة لأنه
+# يخصّ حرفًا في كلمة تالية. النصف الأول من صندوق القاعدة يفصل الحالتين.
+YEH_DOTS_SIDE = 0.50
 
 # ═══════════════ خرائط ورموز ═══════════════
 
@@ -212,7 +228,73 @@ def drop_watermarks(blocks):
     return kept, dropped
 
 
-def page_units(page, stats=None, fix_ligatures=True, drop_watermark=True):
+def _char_zero(char, size):
+    """هل عرض الحرف صفر بالنسبة لحجم خط جزئه؟"""
+    return (char["bbox"][2] - char["bbox"][0]) <= ZERO_W * max(size, 1e-6)
+
+
+def _is_yeh_pair(base, base_size, dots, dots_size):
+    """
+    هل هذان الحرفان ياءً مكسورة؟ (قاعدة مرسومة + نقطتاها بعرض صفر)
+
+    ثلاثة شروط مجتمعة، وكلها هندسية:
+      • القاعدة مسافة لها عرض حقيقي — أي جليف مرسوم لا فراغ.
+      • النقطتان تنوين بعرض صفر — أي أنهما ملتصقتان بجليف آخر.
+      • النقطتان تبدآن في النصف الأول من صندوق القاعدة — أي أنهما فوقها.
+
+    الشرط الثالث هو ما يفصل الياء عن التشكيل الطائر: «تواصلكم وشكرًا»
+    تُصدَّر أيضًا تنوينًا بعرض صفر بعد مسافة، لكن التنوين هناك يقع عند
+    الحافة المقابلة للمسافة لأنه يخصّ ألفًا في الكلمة التالية.
+    """
+    if dots["c"] not in YEH_DOTS or not base["c"].isspace():
+        return False
+    if not _char_zero(dots, dots_size) or _char_zero(base, base_size):
+        return False
+    x0, x1 = base["bbox"][0], base["bbox"][2]
+    return x0 <= dots["bbox"][0] < x0 + (x1 - x0) * YEH_DOTS_SIDE
+
+
+def mend_broken_yeh(spans, stats=None):
+    """
+    يضمّ كل «قاعدة + نقطتين» في السطر ياءً واحدة، ويرجّع أجزاءه مُصلَحة.
+
+    يعمل على السطر لا على الجزء الواحد لأن المولِّد يقطع أحيانًا بين
+    القاعدة ونقطتيها: تخرج المسافة جزءًا قائمًا بذاته ويبدأ الجزء التالي
+    بالتنوين. المعالجة داخل الجزء وحده كانت تترك «الت ً تم» بلا إصلاح.
+
+    الصندوق المأخوذ هو صندوق القاعدة — فهي المرسومة على الصفحة والنقطتان
+    بلا عرض — فتبقى الإحداثيات صحيحة لفحص الحبر وقاعدة الفجوة بعدها.
+
+    هذا الإصلاح يُنقذ الياء وحدها. الملف الذي يُظهر هذا النمط تكون خريطة
+    خطّه مبدَّلة في حروف أخرى لا أثر هندسي لها (اللام الوسطية تخرج ياءً:
+    «على» → «عيى»)، ولذلك يرصد `ocr.py` النمط نفسه ويحوّل الصفحة كاملة
+    إلى الـOCR حين يكون متاحًا. هذا هو المسار الاحتياطي حين لا يكون.
+    """
+    flat = [(si, ci) for si, span in enumerate(spans)
+            for ci in range(len(span.get("chars") or []))]
+    kept = [[] for _ in spans]
+
+    i, n = 0, len(flat)
+    while i < n:
+        si, ci = flat[i]
+        char = spans[si]["chars"][ci]
+        if i + 1 < n:
+            sj, cj = flat[i + 1]
+            dots = spans[sj]["chars"][cj]
+            if _is_yeh_pair(char, spans[si]["size"], dots, spans[sj]["size"]):
+                kept[si].append(dict(char, c="ي"))
+                if stats is not None:
+                    stats["yeh"] = stats.get("yeh", 0) + 1
+                i += 2
+                continue
+        kept[si].append(char)
+        i += 1
+
+    return [dict(span, chars=chars) for span, chars in zip(spans, kept)]
+
+
+def page_units(page, stats=None, fix_ligatures=True, drop_watermark=True,
+               mend_yeh=True):
     """
     يقرأ الصفحة بـ rawdict ويحوّلها إلى قائمة وحدات بإحداثياتها.
 
@@ -243,7 +325,10 @@ def page_units(page, stats=None, fix_ligatures=True, drop_watermark=True):
     for blk in blocks:
         for line in blk["lines"]:
             lid += 1
-            for span in line["spans"]:
+            spans = line["spans"]
+            if mend_yeh:
+                spans = mend_broken_yeh(spans, stats)
+            for span in spans:
                 chars = span.get("chars") or []
                 size, font = span["size"], span["font"]
                 flags = span.get("flags", 0)
@@ -629,7 +714,7 @@ def tidy(s):
 # ═══════════════ الواجهة العامة ═══════════════
 
 def page_lines(page, stats=None, unify_digits=True, check_ink=True,
-               fix_ligatures=True, drop_watermark=True):
+               fix_ligatures=True, drop_watermark=True, mend_yeh=True):
     """
     يرجّع أسطر صفحة واحدة: قائمة قواميس فيها
     text / x0 / x1 / y0 / y1 / size / bold / row.
@@ -638,7 +723,8 @@ def page_lines(page, stats=None, unify_digits=True, check_ink=True,
     """
     ink, z = ink_map(page) if check_ink else (None, 1.0)
     lines = build_lines(
-        page_units(page, stats, fix_ligatures, drop_watermark), ink, z)
+        page_units(page, stats, fix_ligatures, drop_watermark, mend_yeh),
+        ink, z)
     if unify_digits:
         for line in lines:
             line["text"] = line["text"].translate(AR2WEST)

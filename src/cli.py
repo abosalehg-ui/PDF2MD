@@ -14,6 +14,7 @@ import os
 import re
 import sys
 
+from . import ocr
 from .common import ensure_parent, out_path_for, stats_summary, verdict_of
 from .core import __version__
 from .structure import Options, convert, diagnose
@@ -59,6 +60,15 @@ def build_parser():
                    help="إبقاء صفحات الفهرس الأصلية")
     p.add_argument("--no-toc", action="store_true",
                    help="عدم توليد فهرس بروابط")
+    p.add_argument("--ocr", default="auto", choices=["auto", "never", "always"],
+                   help="قراءة الصفحات ذات طبقة النص المعطوبة بالـOCR "
+                        "(الافتراضي: auto — الصفحة المعطوبة وحدها)")
+    p.add_argument("--ocr-lang", default=ocr.OCR_LANG,
+                   help=f"لغات Tesseract مفصولة بـ+ (الافتراضي: {ocr.OCR_LANG}؛ "
+                        f"للمستند العربي الخالص «ara» أنقى — إضافة eng تجعل "
+                        f"المميِّز يقرأ كلمات عربية حروفًا لاتينية)")
+    p.add_argument("--ocr-dpi", type=int, default=ocr.OCR_DPI,
+                   help=f"دقة رسم الصفحة قبل الـOCR (الافتراضي: {ocr.OCR_DPI})")
     p.add_argument("--no-tables", action="store_true",
                    help="عدم بناء جداول Markdown — الصفوف تخرج فقرات")
     p.add_argument("-f", "--force", action="store_true",
@@ -87,7 +97,14 @@ def options_from(args):
         h_top=args.h_top,
         h_sub=args.h_sub,
         para_gap=args.para_gap,
+        ocr=args.ocr,
+        ocr_lang=args.ocr_lang,
+        ocr_dpi=args.ocr_dpi,
     )
+    # دقة أقل من ٢٠٠ تُذيب نقاط الحروف العربية فتخرج «ب/ت/ث» متبادلة —
+    # وهو فساد صامت لا رسالة خطأ، فالرفض هنا أرحم من ناتج مغلوط.
+    if opt.ocr_dpi < 200:
+        sys.exit("دقة OCR أقل من 200 تُتلف نقاط الحروف العربية.")
     if args.pages:
         # الصفحة الواحدة تُكتب رقمًا مجردًا: `--pages 12`. بلا الجزء
         # الاختياري كان أشيع استعمال يتطلب `12-12`.
@@ -106,6 +123,14 @@ def print_diag(pdf, d):
     print(f"   الصفحات: {d['pages']}  |  العيّنة: {d['sampled']}  |  "
           f"الخطوط: {d['fonts']}")
     print(f"   المنتج: {d['producer'] or '—'}  |  المُنشئ: {d['creator'] or '—'}")
+    if d.get("broken"):
+        pages = "، ".join(str(n) for n in d["broken"][:6])
+        more = " …" if len(d["broken"]) > 6 else ""
+        print(f"   ⚠ طبقة النص معطوبة في {len(d['broken'])} من صفحات "
+              f"العيّنة ({pages}{more}) — {d['broken_why']}.")
+        print("     " + ("ستُقرأ هذه الصفحات بالـOCR عند التحويل."
+                         if d.get("ocr_ready")
+                         else "ثبّت Tesseract وإلا خرجت ناقصة أو خاوية."))
     if not d["has_text"]:
         print("   ⚠ لا توجد طبقة نص — الملف مصوّر ويحتاج OCR قبل التحويل."
               if d["needs_ocr"] else "   ⚠ لا توجد طبقة نص في هذا الملف.")
