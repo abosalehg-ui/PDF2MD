@@ -29,9 +29,27 @@ const OPTION_FIELDS = {
   tables: { el: 'optTables', kind: 'bool' },
 };
 
+/*
+ * صيغة عرض الأعداد. غربية لا هندية، وواحدة في كل الواجهة: كانت الرباطات
+ * وعدد الحروف تُعرض بـ'ar-EG' (أرقام هندية) بينما جدول التشخيص وحجم الملف
+ * غربية، فتجتمع الصيغتان في اللوحة الواحدة. وسطر الأوامر وسطح المكتب
+ * يعرضان غربية دائمًا، وناتج الأداة نفسه يوحّد الهندية إلى غربية.
+ */
+const NUM = new Intl.NumberFormat('en-US');
+
 const STORE_OPTIONS = 'pdf2md.options';
 const STORE_THEME = 'pdf2md.theme';
 const LOG_LIMIT = 4000; // أسطر — سجل بلا سقف يلتهم الذاكرة على الدفعات
+
+/*
+ * حدّ ليّن لحجم الملف — تنبيه لا رفض.
+ *
+ * لسان المتصفّح محدود الذاكرة، والملف يُقرأ كاملًا ثم يُكتب في نظام ملفات
+ * المتصفّح، فالملف الضخم يقتل الخيط. وكان ذلك يقع بلا أي إنذار سابق:
+ * المستخدم يُفلت ملفًا فيموت الخيط صامتًا. الأفضل أن يعرف الحدّ قبل أن
+ * يصطدم به، وأن يُترك له القرار — فالحدّ يعتمد على جهازه لا على رقم ثابت.
+ */
+const BIG_FILE = 150 * 1024 * 1024;
 
 const state = {
   files: [], // {id, file, status}
@@ -209,6 +227,13 @@ function addFiles(fileList) {
     state.files.push({ id: state.nextId++, file, status: { kind: '', text: '' } });
   }
   if (pdfs.length) say(`أُضيف ${pdfs.length} ملف إلى القائمة.`);
+  const huge = pdfs.filter((f) => f.size > BIG_FILE);
+  if (huge.length) {
+    const names = huge.map((f) => `${f.name} (${human(f.size)})`).join('، ');
+    status(`تنبيه: ${huge.length} ملف أكبر من ${human(BIG_FILE)} — قد تنفد ذاكرة اللسان.`);
+    say(`⚠ ملفات كبيرة: ${names}. ذاكرة لسان المتصفّح محدودة، فإن فشل `
+        + `التحويل هنا فحوّلها من سطر الأوامر أو تطبيق سطح المكتب.`);
+  }
   if (rejected) {
     status(`تُجوهل ${rejected} ملف — المقبول ملفات PDF فقط.`);
     say(`تُجوهل ${rejected} ملف ليس بصيغة PDF.`);
@@ -266,15 +291,41 @@ function initTabs() {
     ['tabDiag', 'paneDiag'],
     ['tabLog', 'paneLog'],
   ];
-  for (const [tabId] of tabs) {
-    $(tabId).addEventListener('click', () => {
-      for (const [t, p] of tabs) {
-        const on = t === tabId;
-        $(t).setAttribute('aria-selected', String(on));
-        $(p).hidden = !on;
-      }
+
+  /**
+   * يفعّل لسانًا بموضعه. `tabindex` يتنقّل معه — نمط `tablist` في ممارسات
+   * WAI-ARIA يجعل الألسنة محطةً واحدة في ترتيب Tab: المفتاح يدخل الشريط
+   * ويخرج منه، والتنقّل **بين** الألسنة بالأسهم.
+   */
+  function select(index, focus) {
+    tabs.forEach(([tabId, paneId], k) => {
+      const on = k === index;
+      const tab = $(tabId);
+      tab.setAttribute('aria-selected', String(on));
+      tab.tabIndex = on ? 0 : -1;
+      $(paneId).hidden = !on;
+      if (on && focus) tab.focus();
     });
   }
+
+  tabs.forEach(([tabId], index) => {
+    const tab = $(tabId);
+    tab.addEventListener('click', () => select(index, false));
+    tab.addEventListener('keydown', (e) => {
+      // الصفحة RTL: السهم الأيسر يتقدّم والأيمن يتراجع، كما يتوقّعه من
+      // يقرأ من اليمين. Home وEnd يقفزان إلى الطرفين.
+      const step = { ArrowLeft: 1, ArrowRight: -1 }[e.key];
+      let next = null;
+      if (step !== undefined) next = (index + step + tabs.length) % tabs.length;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = tabs.length - 1;
+      if (next === null) return;
+      e.preventDefault();
+      select(next, true);
+    });
+  });
+
+  select(0, false);
 }
 
 function showTab(tabId) {
@@ -348,7 +399,7 @@ function renderDiagnosis(d) {
     ['طبقة نص', d.has_text ? 'نعم' : 'لا — يحتاج OCR'],
     ['المنتج', d.producer || '—'],
     ['المُنشئ', d.creator || '—'],
-    ['رباطات مُصلَحة في العيّنة', d.ligatures.toLocaleString('ar-EG')],
+    ['رباطات مُصلَحة في العيّنة', NUM.format(d.ligatures)],
     ['أكثر الرباطات', d.pairs.map((p) => `${p.pair}×${p.count}`).join('، ') || '—'],
   ];
   for (const [key, value] of facts) {
@@ -405,6 +456,13 @@ const engine = new Engine((event) => {
     say('— أُوقفت العملية، وتُعاد تهيئة المحرّك.');
   } else if (event.type === 'error') {
     say(`✗ ${event.msg}`);
+    // الانهيار القاتل كان يُكتب في تبويب السجل وحده، فيرى المستخدم واجهةً
+    // تقول «جاهز» ولا تستجيب. الحالة هي المكان الذي ينظر إليه فعلًا.
+    if (event.fatal) {
+      status(`✗ ${event.msg}`);
+      progress(0);
+      syncButtons();
+    }
   }
 });
 
@@ -430,6 +488,11 @@ async function runBatch() {
   syncButtons();
 
   const options = readOptions();
+  // نتائج التشغيل السابق تُمسح: تراكمها كان يُنتج اسمين متطابقين في قائمة
+  // المعاينة بلا ما يميّزهما، و«تنزيل الكل» يسلّم «ملف.md» و«ملف-2.md»
+  // فلا يُعرف أيّهما ناتج الإعدادات الجديدة. وسطح المكتب يمسحها كذلك.
+  state.results = [];
+  renderResults();
   const queue = state.files.slice();
   let done = 0;
   let failed = 0;
@@ -457,7 +520,7 @@ async function runBatch() {
         truncated: result.truncated,
         text: result.markdown, // ما يكتبه zip.js
       });
-      say(`✓ ${result.name} (${result.stats.chars.toLocaleString('ar-EG')} حرف — ${result.summary})`);
+      say(`✓ ${result.name} (${NUM.format(result.stats.chars)} حرف — ${result.summary})`);
       renderResults();
     } catch (err) {
       if (err instanceof Stopped) {

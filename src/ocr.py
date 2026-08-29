@@ -111,13 +111,41 @@ def why_unavailable():
 
 # ═══════════════ رصد الطبقة المعطوبة ═══════════════
 
-def _image_cover(page):
+def _raw_of(page, raw=None):
+    """
+    مخرَج `rawdict` للصفحة — يُعاد استعماله بدل إعادة تحليلها لكل فحص.
+
+    تحليل الصفحة عملية مكلفة، وكان المسار يكرّرها ثلاث إلى أربع مرات على
+    كل صفحة: مرة في `_body_chars` ومرة في `broken_yeh_hits` ومرة في
+    `_image_cover` ومرة في `core.page_units`. المستدعي يحلّلها مرة واحدة
+    ويمرّرها، ومن لم يمرّرها تعمل الدالّة كما كانت.
+    """
+    return page.get_text("rawdict") if raw is None else raw
+
+
+def _plain_text(raw):
+    """
+    نصّ الصفحة من `rawdict` — بديل عن استدعاء `get_text()` مرة إضافية.
+
+    المسافات داخل الجزء محفوظة لأنها تُصدَّر حروفًا مثل غيرها، والأسطر
+    تُفصل بسطر جديد — وهذا كل ما يحتاجه `looks_scrambled` لعدّ الكلمات
+    اللاتينية.
+    """
+    return "\n".join(
+        "".join(ch["c"] for span in line["spans"]
+                for ch in span.get("chars") or [])
+        for blk in raw["blocks"] if blk["type"] == 0
+        for line in blk.get("lines", [])
+    )
+
+
+def _image_cover(page, raw=None):
     """نسبة مساحة الصفحة التي تغطيها الصور المرسومة عليها."""
     area = abs(page.rect.width * page.rect.height)
     if area <= 0:
         return 0.0
     covered = 0.0
-    for block in page.get_text("dict")["blocks"]:
+    for block in _raw_of(page, raw)["blocks"]:
         if block["type"] == 1:          # صورة
             x0, y0, x1, y1 = block["bbox"]
             covered += abs((x1 - x0) * (y1 - y0))
@@ -146,72 +174,90 @@ def looks_scrambled(text):
     return plausible / len(tokens) < LATIN_PLAUSIBLE
 
 
-def broken_yeh_hits(page):
+def broken_yeh_hits(page, raw=None):
     """
-    عدد شواهد «الياء المكسورة»: مسافة بعرض حقيقي يليها تنوين ضم بعرض صفر.
+    عدد شواهد «الياء المكسورة»: قاعدة مرسومة مسافةً تليها نقطتاها بعرض صفر.
 
     مولِّدات معيّنة ترسم الياء بجليفين — قاعدة مهملة النقط تُصدَّر مسافةً،
-    والنقطتان تُصدَّران U+064C بعرض صفر — فتخرج «تفيد» بهيئة «تف ٌد».
+    والنقطتان تُصدَّران تنوينًا بعرض صفر — فتخرج «تفيد» بهيئة «تف ٌد».
     وجود هذا النمط دليل قاطع على أن خريطة الخط مبدَّلة، ومعه تُبدَّل حروف
     أخرى لا أثر هندسي لها (اللام الوسطية تخرج ياءً)، فالطبقة كلها مشبوهة.
+
+    الحكم على الزوج يُترك لـ`core.is_yeh_pair` — وهي نفسها التي يستعملها
+    المُصلِح — لأن وصف الظاهرة مرّتين يعني وصفين يتباعدان. وقد تباعدا فعلًا:
+    كان الرصد هنا يقتصر على تنوين الضمّ فلا يرى صورة تنوين الفتح التي
+    يُصلحها المُصلِح، ويُهمل شرط الموضع فيَعُدّ **التشكيل الطائر** شاهدًا —
+    وهو ما يرفضه المُصلِح صراحةً. والعتبة ثلاثة فقط، فثلاث كلمات تنتهي
+    بـ«ـًا» كانت تكفي لإرسال صفحة سليمة كلها إلى OCR.
+
+    والمسح يجري على السطر لا على الجزء الواحد، كما في `mend_broken_yeh`:
+    المولِّد يقطع أحيانًا بين القاعدة ونقطتيها فيبدأ الجزء التالي بالتنوين.
     """
     hits = 0
-    for block in page.get_text("rawdict")["blocks"]:
+    for block in _raw_of(page, raw)["blocks"]:
         if block["type"] != 0:
             continue
         for line in block.get("lines", []):
-            for span in line["spans"]:
-                chars = span.get("chars") or []
-                for i in range(1, len(chars)):
-                    if chars[i]["c"] != "ٌ":
-                        continue
-                    box = chars[i]["bbox"]
-                    prev = chars[i - 1]
-                    if box[2] - box[0] > 0.05 * span["size"]:
-                        continue        # تنوين حقيقي له عرض
-                    if not prev["c"].isspace():
-                        continue
-                    pbox = prev["bbox"]
-                    if pbox[2] - pbox[0] > 0.05 * span["size"]:
-                        hits += 1
+            spans = line["spans"]
+            flat = [(si, ci) for si, span in enumerate(spans)
+                    for ci in range(len(span.get("chars") or []))]
+            for k in range(1, len(flat)):
+                si, ci = flat[k - 1]
+                sj, cj = flat[k]
+                if core.is_yeh_pair(spans[si]["chars"][ci], spans[si]["size"],
+                                    spans[sj]["chars"][cj], spans[sj]["size"]):
+                    hits += 1
     return hits
 
 
-def _body_chars(page):
+def _body_chars(page, raw=None):
     """
     عدد حروف المتن في الصفحة — بعد استبعاد العلامة المائية.
 
     لا يصلح العدّ على `get_text()` الخام: صفحة المرفق الممسوحة ضوئيًا تحمل
     ختمًا أو توقيعًا مكرَّرًا بمئتَي حرف، فتبدو «مليئة بالنص» بينما المتن
     المقروء فيها صفر — وهو نفسه ما يحذفه المسار لاحقًا فتخرج الصفحة خاوية.
+
+    العدّ على `chars` لا على `text`: أجزاء `rawdict` **لا تحمل مفتاح `text`
+    إطلاقًا** — تحمل `chars` بدلًا منه، و`text` مفتاحُ `dict` وحده. وكان
+    `span.get("text", "")` يرجّع فراغًا دائمًا، فترجع الدالّة صفرًا على كل
+    صفحة في الدنيا. وأثرُ ذلك ليس تجميليًّا: الفرع `body == 0` في
+    `page_verdict` يصير صحيحًا دائمًا، فتنهار عتبة الصفحة الممسوحة من
+    IMG_COVER إلى IMG_COVER_EMPTY — أي أن كل صفحة تحمل شعار جهة أو ختمًا
+    يغطي عُشر مساحتها تُحكَم «ممسوحة بلا نص» مهما كان متنها غزيرًا، فتُرمى
+    طبقة نصها السليمة ويحلّ محلّها OCR أدنى منها. ويحرس هذا الاختبارُ
+    `test_healthy_page_with_a_logo_is_not_called_scanned`.
     """
-    blocks = [b for b in page.get_text("rawdict")["blocks"] if b["type"] == 0]
+    blocks = [b for b in _raw_of(page, raw)["blocks"] if b["type"] == 0]
     blocks, _ = core.drop_watermarks(blocks)
     return sum(
-        not ch.isspace()
+        not ch["c"].isspace()
         for blk in blocks
         for line in blk["lines"]
         for span in line["spans"]
-        for ch in span.get("text", "")
+        for ch in span.get("chars") or []
     )
 
 
-def page_verdict(page):
+def page_verdict(page, raw=None):
     """
     يرجّع (يحتاج OCR؟، سبب مختصر بالعربية).
 
     السبب يُعرض في سجلّ التحويل ليعرف المستخدم لماذا بطُؤت صفحة بعينها.
-    """
-    text = page.get_text().strip()
 
-    body = _body_chars(page)
+    `raw` مخرَج `rawdict` محلَّل مسبقًا: الفحوص الثلاثة كلها تقرأ منه، فلا
+    تُحلَّل الصفحة إلا مرة واحدة يتقاسمها هذا الحكم و`core.page_lines`.
+    """
+    raw = _raw_of(page, raw)
+
+    body = _body_chars(page, raw)
     if body < MIN_CHARS:
-        cover = _image_cover(page)
+        cover = _image_cover(page, raw)
         if cover >= IMG_COVER or (body == 0 and cover >= IMG_COVER_EMPTY):
             return True, "صفحة ممسوحة ضوئيًا بلا طبقة نص"
-    if looks_scrambled(text):
+    if looks_scrambled(_plain_text(raw)):
         return True, "خريطة الخط مكسورة — الحروف تخرج لاتينية عشوائية"
-    if broken_yeh_hits(page) >= BROKEN_YEH_HITS:
+    if broken_yeh_hits(page, raw) >= BROKEN_YEH_HITS:
         return True, "خريطة الخط مبدَّلة — ياء مرسومة بمسافة وتنوين"
     return False, ""
 

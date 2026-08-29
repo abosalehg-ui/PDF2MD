@@ -17,7 +17,9 @@
   --muted: #7a6a55;
   --line: #e0d6c2;
   --field-line: #9c8a66;
-  --ok: #2e7d52;
+  /* ٥٫٠١:١ على --head — وهي خلفية حكم التشخيص. كان #2e7d52 يعطي
+     ٤٫٢٢:١ عليها، دون ٤٫٥ التي يفرضها WCAG SC 1.4.3 لنصّ بهذا الحجم. */
+  --ok: #2a7049;
   --bad: #b3261e;
   --head: #f3eada;
   --on-brown: #fff9ec;
@@ -41,7 +43,10 @@
   --ink: #f2e9da;
   --muted: #b3a48c;
   --line: #3d3327;
-  --field-line: #6f6047;
+  /* ٣٫٣١:١ على --panel. كان #6f6047 يعطي ٢٫٧٣:١ — دون ٣:١ التي يفرضها
+     WCAG SC 1.4.11 لحدود عناصر التحكم. اللوحة الفاتحة صُحّحت قبلُ،
+     والداكنة وُلدت بعدها فورثت العيب نفسه. */
+  --field-line: #7d6d52;
   --ok: #63c68f;
   --bad: #ef857c;
   --head: #2e2519;
@@ -257,7 +262,10 @@ h3 {
 }
 
 .bar-fill {
-  background: var(--gold);
+  /* تعبئة الشريط هي المعلومة الوحيدة التي تنقل التقدّم، لا زخرفة — فتنطبق
+     عليها SC 1.4.11. و--gold يعطي ٢٫٣٨:١ على --panel في اللوحة الفاتحة،
+     و--gold-focus يعطي ٣٫٧٣:١. */
+  background: var(--gold-focus);
   height: 100%;
   width: 0;
   transition: width 0.25s ease;
@@ -369,7 +377,9 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  direction: ltr;
+  /* plaintext لا ltr: الاسم العربي يتبع اتجاهه فتستقيم أقواسه، واللاتيني
+     يبقى على اتجاهه ويظهر امتداده في طرفه المتوقَّع. */
+  unicode-bidi: plaintext;
   text-align: right;
 }
 
@@ -390,6 +400,8 @@ h3 {
   color: var(--bad);
 }
 
+/* ٢٨×٢٨ لا ١٩×١٨: WCAG 2.2 SC 2.5.8 يفرض ٢٤×٢٤ على الأقل، وهذا هو
+   السبيل الوحيد لإزالة ملف من القائمة على شاشة تُلمس بالإصبع. */
 .files .x {
   border: none;
   background: transparent;
@@ -397,7 +409,12 @@ h3 {
   cursor: pointer;
   font-size: 18px;
   line-height: 1;
-  padding: 0 4px;
+  padding: 0;
+  min-width: 28px;
+  min-height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
 }
 .files .x:hover {
   color: var(--bad);
@@ -528,6 +545,21 @@ button:disabled {
 }
 
 /* ── الألسنة والمخرَج ── */
+
+/* صفّ الأفعال يلتفّ، وزرّ الفحص يحمل اسم الملف كاملًا فيُقصّ عند الحاجة:
+   اسم مثل «مذكرة جوابية في الدعوى العمالية رقم ١٢٣٤٥.pdf» كان يدفع الصفّ
+   خارج شاشة الجوال ويُحدث تمريرًا أفقيًا للصفحة كلها. */
+.actions .row {
+  flex-wrap: wrap;
+}
+
+#btnDiag {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .actions .bar {
   margin: 12px 0 8px;

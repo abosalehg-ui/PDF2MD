@@ -233,7 +233,7 @@ def _char_zero(char, size):
     return (char["bbox"][2] - char["bbox"][0]) <= ZERO_W * max(size, 1e-6)
 
 
-def _is_yeh_pair(base, base_size, dots, dots_size):
+def is_yeh_pair(base, base_size, dots, dots_size):
     """
     هل هذان الحرفان ياءً مكسورة؟ (قاعدة مرسومة + نقطتاها بعرض صفر)
 
@@ -245,6 +245,10 @@ def _is_yeh_pair(base, base_size, dots, dots_size):
     الشرط الثالث هو ما يفصل الياء عن التشكيل الطائر: «تواصلكم وشكرًا»
     تُصدَّر أيضًا تنوينًا بعرض صفر بعد مسافة، لكن التنوين هناك يقع عند
     الحافة المقابلة للمسافة لأنه يخصّ ألفًا في الكلمة التالية.
+
+    الدالّة عامة لا خاصة لأن `ocr.broken_yeh_hits` يرصد بها الظاهرة نفسها:
+    الراصد والمُصلِح لازم يتفقان حرفيًا على تعريفها، وأي وصف ثانٍ لها في
+    موضع آخر ينحرف عن هذا بمرور الوقت — وقد انحرف فعلًا قبل توحيدهما هنا.
     """
     if dots["c"] not in YEH_DOTS or not base["c"].isspace():
         return False
@@ -281,7 +285,7 @@ def mend_broken_yeh(spans, stats=None):
         if i + 1 < n:
             sj, cj = flat[i + 1]
             dots = spans[sj]["chars"][cj]
-            if _is_yeh_pair(char, spans[si]["size"], dots, spans[sj]["size"]):
+            if is_yeh_pair(char, spans[si]["size"], dots, spans[sj]["size"]):
                 kept[si].append(dict(char, c="ي"))
                 if stats is not None:
                     stats["yeh"] = stats.get("yeh", 0) + 1
@@ -294,9 +298,12 @@ def mend_broken_yeh(spans, stats=None):
 
 
 def page_units(page, stats=None, fix_ligatures=True, drop_watermark=True,
-               mend_yeh=True):
+               mend_yeh=True, raw=None):
     """
     يقرأ الصفحة بـ rawdict ويحوّلها إلى قائمة وحدات بإحداثياتها.
+
+    `raw` مخرَج rawdict محلَّل مسبقًا — يمرّره من حلّل الصفحة قبلُ (مثل
+    `ocr.page_verdict`) فلا تُحلَّل مرتين. ومن لم يمرّره يعمل كما كان.
 
     إصلاح الرباط المقلوب
     ────────────────────
@@ -316,7 +323,9 @@ def page_units(page, stats=None, fix_ligatures=True, drop_watermark=True,
     units = []
     sid = lid = 0
 
-    blocks = [b for b in page.get_text("rawdict")["blocks"] if b["type"] == 0]
+    if raw is None:
+        raw = page.get_text("rawdict")
+    blocks = [b for b in raw["blocks"] if b["type"] == 0]
     if drop_watermark:
         blocks, dropped = drop_watermarks(blocks)
         if stats is not None and dropped:
@@ -714,7 +723,8 @@ def tidy(s):
 # ═══════════════ الواجهة العامة ═══════════════
 
 def page_lines(page, stats=None, unify_digits=True, check_ink=True,
-               fix_ligatures=True, drop_watermark=True, mend_yeh=True):
+               fix_ligatures=True, drop_watermark=True, mend_yeh=True,
+               raw=None):
     """
     يرجّع أسطر صفحة واحدة: قائمة قواميس فيها
     text / x0 / x1 / y0 / y1 / size / bold / row.
@@ -723,7 +733,7 @@ def page_lines(page, stats=None, unify_digits=True, check_ink=True,
     """
     ink, z = ink_map(page) if check_ink else (None, 1.0)
     lines = build_lines(
-        page_units(page, stats, fix_ligatures, drop_watermark, mend_yeh),
+        page_units(page, stats, fix_ligatures, drop_watermark, mend_yeh, raw),
         ink, z)
     if unify_digits:
         for line in lines:
