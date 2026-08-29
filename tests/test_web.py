@@ -33,7 +33,11 @@ def test_defaults_match_engine_defaults():
     """الصفحة الفارغة يجب أن تعطي خيارات محرّك افتراضية بحذافيرها."""
     built = web.build_options({})
     default = Options()
+    # `ocr` وحده يخالف عمدًا: لا Tesseract في Pyodide، فالمتصفّح يعطّله
+    # صراحةً بدل حساب حكمٍ لا يُنفَّذ — انظر test_browser_never_asks_for_ocr.
     for field in vars(default):
+        if field == "ocr":
+            continue
         assert getattr(built, field) == getattr(default, field), field
 
 
@@ -78,6 +82,35 @@ def test_reversed_page_range_is_corrected():
 
 def test_title_is_trimmed():
     assert web.build_options({"title": "  نظام العمل  "}).title == "نظام العمل"
+
+
+def test_every_boolean_option_is_accepted_by_the_bridge():
+    """
+    نظير `test_every_boolean_option_has_a_checkbox` في الواجهة الرسومية.
+
+    بناء Options مكرر في ثلاث واجهات، وكان الحارس موجودًا للثانية وغائبًا
+    عن الثالثة — فخيار منطقي جديد يصل إلى سطر الأوامر وسطح المكتب ويغيب
+    عن المتصفّح بصمت، بلا شيء يمسك النسيان.
+    """
+    boolean_fields = {name for name, field in Options.__dataclass_fields__.items()
+                      if field.type in ("bool", bool)}
+    assert boolean_fields, "لم يُقرأ أي حقل منطقي — تغيّر شكل dataclass"
+    assert boolean_fields == set(web.BOOL_FIELDS)
+
+
+def test_every_bridge_field_maps_to_a_real_option():
+    """والعكس: حقل لا يقابله شيء في Options يعني إعدادًا يُرسَل ويُهمَل."""
+    for field in web.BOOL_FIELDS:
+        assert field in Options.__dataclass_fields__
+
+
+def test_browser_never_asks_for_ocr():
+    """
+    لا Tesseract داخل Pyodide، فحكم الـOCR في المتصفّح حسابٌ لا يُنفَّذ
+    قراره: كان يفحص كل صفحة ثلاثة فحوص ثم يحذّر بما لا حيلة للمستخدم فيه.
+    """
+    assert web.build_options({}).ocr == "never"
+    assert web.build_options({"ocr": "always"}).ocr == "never"
 
 
 # ═══════════════ اسم المخرَج ═══════════════
@@ -221,8 +254,10 @@ def test_manifest_lists_every_engine_source():
     listed = set(_manifest()["sources"])
     on_disk = {f for f in os.listdir(os.path.join(ROOT, "src"))
                if f.endswith(".py")}
-    # gui.py وحده يبقى خارج المتصفّح: PyQt6 لا يعمل على Pyodide
-    assert listed == on_disk - {"gui.py", "cli.py"}
+    # وحدات `gui*` تبقى خارج المتصفّح: PyQt6 لا يعمل على Pyodide. و`cli.py`
+    # كذلك: لا سطر أوامر في لسان متصفّح. وما عداهما يُنسَخ كما هو.
+    desktop_only = {f for f in on_disk if f.startswith("gui")} | {"cli.py"}
+    assert listed == on_disk - desktop_only
 
 
 def test_page_references_existing_assets():
@@ -260,8 +295,31 @@ def test_vercel_config_matches_the_build_script():
 
     # مفتاح واحد مجهول يُسقط البناء بلا سجلّ — فلا يُقبل إلا المعروف
     allowed = {"$schema", "framework", "installCommand", "buildCommand",
-               "outputDirectory"}
+               "outputDirectory", "headers"}
     assert set(cfg) <= allowed, f"مفاتيح غير متوقّعة: {set(cfg) - allowed}"
+
+
+def test_vercel_sends_the_headers_the_meta_tag_cannot():
+    """
+    `frame-ancestors` تتجاهلها المواصفة حين تُسلَّم بوسم meta، فالصفحة
+    قابلة للتأطير رغم سياسة أمن المحتوى في رأسها — وهي صفحة تُفلَت فيها
+    وثائق قد تكون سرّية. وVercel المنصّة الوحيدة من المنصّتين التي تستطيع
+    إرسال ترويسات حقيقية، فما يمكن إصلاحه فيها يُصلَح.
+    """
+    with open(os.path.join(ROOT, "vercel.json"), encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    rules = cfg.get("headers") or []
+    assert rules, "لا ترويسات في vercel.json"
+    sent = {h["key"]: h["value"] for rule in rules for h in rule["headers"]}
+
+    assert "frame-ancestors 'none'" in sent.get("Content-Security-Policy", "")
+    assert sent.get("X-Content-Type-Options") == "nosniff"
+    assert sent.get("Referrer-Policy") == "no-referrer"
+    # COOP/COEP تفتحان باب SharedArrayBuffer، أي إيقافًا يقاطع بايثون بدل
+    # قتل الخيط وإعادة إقلاعه — وهو القيد الذي يشرحه worker.js
+    assert sent.get("Cross-Origin-Opener-Policy") == "same-origin"
+    assert sent.get("Cross-Origin-Embedder-Policy") == "require-corp"
 
 
 def test_page_option_ids_cover_every_engine_option():

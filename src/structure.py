@@ -336,8 +336,16 @@ def _extract_pages(doc, opt, lo, hi, st, say, tick, cancel):
             f"المطلوبة تنمو مع عدد الصفحات. لتحويل جزء استعمل نطاق "
             f"الصفحات، وللتسريع ٣× عطّل فحص الحبر.")
 
+    # الحكم على الصفحة لا يُحسب إلا إذا كان يمكن العمل به. `page_verdict`
+    # تفحص الصفحة ثلاثة فحوص، وحسابها بلا Tesseract يشتري لا شيء: كان
+    # الناتج تحذيرًا لا يملك المستخدم فعل شيء حياله، ثمنه ٧٥٪ من زمن
+    # التحويل (مقيس على ٤٠ صفحة: ٠٫٤٤ ← ٠٫٧٧ ثانية). والحال الافتراضية
+    # لأغلب المستخدمين — و**دائمًا** داخل المتصفّح — أن Tesseract غائب.
+    # فيُقال العجز مرة واحدة في أول التحويل، ثم يمضي المسار بلا ضريبة.
     ready = opt.ocr != "never" and ocr_engine.available()
-    warned = False
+    if opt.ocr != "never" and not ready:
+        say("⚠ " + ocr_engine.why_unavailable())
+        say("  الصفحات الممسوحة ضوئيًا أو المعطوبة الخط ستخرج ناقصة أو خاوية.")
 
     pages = []
     for k, i in enumerate(range(lo, hi + 1)):
@@ -345,18 +353,17 @@ def _extract_pages(doc, opt, lo, hi, st, say, tick, cancel):
             raise ConversionCancelled("أُلغي التحويل.")
         page = doc[i]
 
+        # الصفحة تُحلَّل مرة واحدة يتقاسمها حكم الـOCR ومحرّك الاستخراج،
+        # بدل أن يعيد كلٌّ منهما تحليلها لنفسه.
+        raw = page.get_text("rawdict")
+
         lines = None
-        if opt.ocr != "never":
+        if ready:
             if opt.ocr == "always":
                 want, why = True, "بطلب صريح"
             else:
-                want, why = ocr_engine.page_verdict(page)
-            if want and not ready:
-                if not warned:
-                    say("⚠ " + ocr_engine.why_unavailable())
-                    warned = True
-                st["ocr_missed"] += 1
-            elif want:
+                want, why = ocr_engine.page_verdict(page, raw)
+            if want:
                 lines = ocr_engine.page_lines(page, dpi=opt.ocr_dpi,
                                        language=opt.ocr_lang)
                 if lines is None:
@@ -376,7 +383,8 @@ def _extract_pages(doc, opt, lo, hi, st, say, tick, cancel):
                                     unify_digits=opt.unify_digits,
                                     check_ink=opt.check_ink,
                                     fix_ligatures=opt.fix_ligatures,
-                                    drop_watermark=opt.drop_watermark)
+                                    drop_watermark=opt.drop_watermark,
+                                    raw=raw)
         elif opt.unify_digits:
             for line in lines:
                 line["text"] = line["text"].translate(core.AR2WEST)
@@ -557,8 +565,8 @@ def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
         if st["ocr"]:
             say(f"قُرئت {st['ocr']:,} صفحة بالـOCR — طبقة نصها معطوبة.")
         if st["ocr_missed"]:
-            say(f"⚠ {st['ocr_missed']:,} صفحة طبقة نصها معطوبة ولم تُقرأ "
-                f"بالـOCR — ناتجها ناقص أو خاوٍ.")
+            say(f"⚠ {st['ocr_missed']:,} صفحة طبقة نصها معطوبة وفشل تشغيل "
+                f"OCR عليها — ناتجها ناقص أو خاوٍ.")
         if st["watermark"]:
             say(f"حُذفت علامة مائية: {st['watermark']:,} جزء نصي مائل أو باهت.")
 
@@ -626,36 +634,41 @@ def diagnose(pdf_path, sample_every=7, progress=None, cancel=None):
         idx = list(range(0, len(doc), max(1, sample_every)))
         tick = progress or (lambda p, m: None)
 
-        raw = "".join(doc[i].get_text() for i in idx)
+        raw_text = "".join(doc[i].get_text() for i in idx)
         st = {"lig": 0, "pairs": {}}
         parts = []
+        # «فيه طبقة نص» لا يعني «طبقته صالحة»: الملف ذو خريطة الخط المكسورة
+        # يمرّ بطبقة نص كاملة نصُّها حروف لاتينية عشوائية، وكان التشخيص
+        # يحكم عليه بالسلامة لأن الرباطات فيه سليمة — ولا رباط أصلًا.
+        #
+        # الحكم يُحسب هنا لا في حلقة ثانية: تحليل الصفحة الواحد يكفي
+        # الاستخراجَ والحكمَ معًا. وهو يُحسب دائمًا خلافًا لمسار التحويل،
+        # لأن غاية التشخيص أن يقول للمستخدم إن كان يحتاج Tesseract أصلًا.
+        broken, broken_why = [], ""
         for k, i in enumerate(idx):
             if cancel is not None and cancel.is_set():
                 raise ConversionCancelled("أُلغي الفحص.")
+            page = doc[i]
+            page_raw = page.get_text("rawdict")
             parts.append("\n".join(
-                line["text"] for line in core.page_lines(doc[i], st,
-                                                         check_ink=False)))
+                line["text"] for line in core.page_lines(page, st,
+                                                         check_ink=False,
+                                                         raw=page_raw)))
+            want, why = ocr_engine.page_verdict(page, page_raw)
+            if want:
+                broken.append(i + 1)
+                broken_why = broken_why or why
             tick(int(100 * (k + 1) / len(idx)), f"فحص ص {i + 1}")
         fixed = "\n".join(parts)
 
         rows = [{
             "word": good,
-            "before_ok": raw.count(good), "before_bad": raw.count(bad),
+            "before_ok": raw_text.count(good), "before_bad": raw_text.count(bad),
             "after_ok": fixed.count(good), "after_bad": fixed.count(bad),
         } for good, bad in CANARY]
 
-        has_text = bool(raw.strip())
+        has_text = bool(raw_text.strip())
         images = any(doc[i].get_images() for i in idx)
-
-        # «فيه طبقة نص» لا يعني «طبقته صالحة»: الملف ذو خريطة الخط المكسورة
-        # يمرّ بطبقة نص كاملة نصُّها حروف لاتينية عشوائية، وكان التشخيص
-        # يحكم عليه بالسلامة لأن الرباطات فيه سليمة — ولا رباط أصلًا.
-        broken, broken_why = [], ""
-        for i in idx:
-            want, why = ocr_engine.page_verdict(doc[i])
-            if want:
-                broken.append(i + 1)
-                broken_why = broken_why or why
         fonts = doc[idx[len(idx) // 2]].get_fonts() if idx else []
 
         return {
@@ -670,7 +683,7 @@ def diagnose(pdf_path, sample_every=7, progress=None, cancel=None):
             "pairs": sorted(st["pairs"].items(), key=lambda x: -x[1])[:8],
             "rows": rows,
             "sample": parts[len(parts) // 3][:1500] if parts else "",
-            "raw_sample": raw[:1500],
+            "raw_sample": raw_text[:1500],
             "fonts": len(fonts),
             "producer": doc.metadata.get("producer", "") if doc.metadata else "",
             "creator": doc.metadata.get("creator", "") if doc.metadata else "",

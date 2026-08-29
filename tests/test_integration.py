@@ -15,7 +15,7 @@ try:
 except ImportError:                     # PyMuPDF < 1.24.3
     import fitz
 
-from src import core
+from src import core, ocr
 from src.structure import Options, convert
 
 # ═══════════ العقد مع rawdict ═══════════
@@ -134,5 +134,130 @@ def test_normal_page_keeps_full_dpi(tmp_path):
     try:
         _, z = core.ink_map(doc[0])
         assert z == pytest.approx(core.INK_DPI / 72.0)
+    finally:
+        doc.close()
+
+
+# ═══════════ حكم الـOCR على صفحات حقيقية ═══════════
+#
+# هذا القسم يسدّ الثغرة التي مرّ منها أخطر عيب في المشروع: كل اختبارات
+# `ocr` كانت تبني قواميس rawdict يدويًا، فلم تمرّ **صفحة PyMuPDF حقيقية
+# واحدة** على `page_verdict`. وكانت `_body_chars` تقرأ `span["text"]` وهو
+# مفتاح لا وجود له في rawdict، فترجع صفرًا دائمًا وتُحكَم كل صفحة تحمل
+# شعارًا بأنها ممسوحة ضوئيًا — ومرّ ذلك من CI أخضر.
+
+def _text_page(doc, lines=35, size=11):
+    """صفحة متن عربي كثيف — ما يجب ألّا يُحكم عليه بالعطب أبدًا."""
+    page = doc.new_page()
+    y = 60
+    for i in range(lines):
+        page.insert_text((60, y), f"سطر متن عربي حقيقي رقم {i} في هذه الصفحة",
+                         fontsize=size)
+        y += 20
+    return page
+
+
+def _gray_image(page, rect):
+    """صورة رمادية معتمة — شعار جهة أو ختم، لا علامة مائية نصية."""
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 300, 250))
+    pix.set_rect(pix.irect, (200, 200, 200))
+    page.insert_image(rect, pixmap=pix)
+
+
+def test_rawdict_spans_carry_chars_and_never_text():
+    """
+    العقد المقلوب: `text` مفتاح `dict` وحده، و`rawdict` يعطي `chars`.
+
+    قراءة `span.get("text", "")` على rawdict لا ترمي استثناءً — ترجّع
+    فراغًا، فيصير كل عدّ مبني عليها صفرًا **بصمت**. هذا الاختبار يثبّت
+    الفرق بين الوضعين حتى لا يعود الخلط.
+    """
+    doc = fitz.open()
+    try:
+        _text_page(doc, lines=3)
+        raw_span = doc[0].get_text("rawdict")["blocks"][0]["lines"][0]["spans"][0]
+        dict_span = doc[0].get_text("dict")["blocks"][0]["lines"][0]["spans"][0]
+        assert "chars" in raw_span
+        assert "text" not in raw_span, "rawdict صار يحمل text — راجع _body_chars"
+        assert "text" in dict_span
+    finally:
+        doc.close()
+
+
+def test_body_chars_counts_a_real_text_layer():
+    """صفحة فيها ألف حرف يجب ألّا تُعدّ خاوية."""
+    doc = fitz.open()
+    try:
+        page = _text_page(doc)
+        assert ocr._body_chars(page) > 500
+    finally:
+        doc.close()
+
+
+def test_healthy_page_with_a_logo_is_not_called_scanned():
+    """
+    الانحدار الحرج: صفحة متن غزير + شعار يغطي ~١٣٪ من مساحتها.
+
+    كانت `_body_chars` ترجّع صفرًا فينهار حدّ الصفحة الممسوحة من
+    IMG_COVER إلى IMG_COVER_EMPTY، فتُحكَم الصفحة «ممسوحة بلا طبقة نص»
+    وتُرمى طبقة نصها السليمة في OCR أدنى منها. وترويسة الجهة أو الختم
+    هما الشكل الغالب للمستندات التي بُنيت الأداة لها.
+    """
+    doc = fitz.open()
+    try:
+        page = _text_page(doc)
+        _gray_image(page, fitz.Rect(280, 560, 560, 830))
+        cover = ocr._image_cover(page)
+        assert cover >= ocr.IMG_COVER_EMPTY, "الشعار أصغر من أن يختبر الانحدار"
+        assert cover < ocr.IMG_COVER, "الشعار أكبر من أن يميّز العتبتين"
+        assert ocr.page_verdict(page) == (False, "")
+    finally:
+        doc.close()
+
+
+def test_truly_scanned_page_is_still_detected():
+    """والوجه الآخر: صفحة صورة بلا نص تبقى مرصودة — الإصلاح لم يعطّل الرصد."""
+    doc = fitz.open()
+    try:
+        page = doc.new_page()
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 600, 850))
+        pix.set_rect(pix.irect, (180, 180, 180))
+        page.insert_image(page.rect, pixmap=pix)
+        want, why = ocr.page_verdict(page)
+        assert want and "ممسوحة" in why
+    finally:
+        doc.close()
+
+
+def test_shared_rawdict_gives_the_same_verdict_as_reparsing():
+    """تمرير rawdict محلَّلًا مسبقًا لا يغيّر الحكم — التسريع بلا أثر."""
+    doc = fitz.open()
+    try:
+        page = _text_page(doc)
+        _gray_image(page, fitz.Rect(280, 560, 560, 830))
+        raw = page.get_text("rawdict")
+        assert ocr.page_verdict(page, raw) == ocr.page_verdict(page)
+        assert ocr._body_chars(page, raw) == ocr._body_chars(page)
+        assert ocr.broken_yeh_hits(page, raw) == ocr.broken_yeh_hits(page)
+    finally:
+        doc.close()
+
+
+def test_shared_rawdict_gives_the_same_lines_as_reparsing(tmp_path):
+    """والمحرّك كذلك: الأسطر المبنية من rawdict ممرَّر = المبنية من صفحة."""
+    path = str(tmp_path / "shared.pdf")
+    doc = fitz.open()
+    _text_page(doc)
+    doc.save(path)
+    doc.close()
+
+    doc = fitz.open(path)
+    try:
+        page = doc[0]
+        passed = core.page_lines(page, check_ink=False,
+                                 raw=page.get_text("rawdict"))
+        fresh = core.page_lines(page, check_ink=False)
+        assert [ln["text"] for ln in passed] == [ln["text"] for ln in fresh]
+        assert passed and any(ln["text"] for ln in passed)
     finally:
         doc.close()

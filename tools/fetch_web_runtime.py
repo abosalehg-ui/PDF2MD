@@ -39,6 +39,7 @@ CORE_FILES = {
 }
 
 CHUNK = 1 << 16
+NET_TIMEOUT = 60      # ثوانٍ لكل قراءة — حارس ضد اتصال متوقّف
 
 
 def digest(path):
@@ -57,8 +58,16 @@ def fetch(url, dest, sha256):
 
     print(f"  ↓ {os.path.basename(dest)}")
     tmp = dest + ".part"
-    with urllib.request.urlopen(url) as response, open(tmp, "wb") as out:
-        shutil.copyfileobj(response, out, CHUNK)
+    # مهلة صريحة: اتصال يتوقّف بلا إغلاق يعلّق وظيفة النشر إلى أن تنتهي
+    # مهلة GitHub Actions (ست ساعات) — وفشلٌ واضح في دقيقة خير منها.
+    try:
+        with urllib.request.urlopen(url, timeout=NET_TIMEOUT) as response, \
+                open(tmp, "wb") as out:
+            shutil.copyfileobj(response, out, CHUNK)
+    except OSError as exc:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        sys.exit(f"✗ تعذّر تنزيل {url}\n  {exc}")
 
     found = digest(tmp)
     if found != sha256:

@@ -44,6 +44,21 @@ jobs:
       - run: pip install "PyMuPDF>=1.26,<2" "numpy>=1.24,<3" "PyQt6>=6.6,<7" pytest
       - run: pytest tests/test_gui.py -q
 
+  # جافاسكربت الصفحة كان بلا اختبار إطلاقًا، ومرّ منه عيبان يُجمّدان الواجهة
+  # تجمّدًا دائمًا. الخيط العامل يُستبدَل بكائن وهمي، فتُختبر آلة الحالات
+  # كلها بلا متصفّح ولا Pyodide — ومعها كاتب ZIP يفكّه بايثون للتحقّق.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: node --test tests/js/engine.test.mjs tests/js/zip.test.mjs
+
   lint:
     runs-on: ubuntu-latest
     steps:

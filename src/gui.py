@@ -9,25 +9,19 @@ gui.py — واجهة PyQt6 لأداة PDF2MD.
 تشغيل:  python main.py
 """
 
-import html
 import os
 import sys
 import threading
 import traceback
 
-from PyQt6.QtCore import QSettings, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QKeySequence, QShortcut, QTextOption
+from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtGui import QKeySequence, QShortcut, QTextOption
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
     QFileDialog,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -38,202 +32,25 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QSplitter,
     QStatusBar,
-    QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from . import ocr as ocr_engine
-from .common import ensure_parent, out_path_for, stats_summary, verdict_of
+from .common import out_path_for, stats_summary
 from .core import __version__
-from .structure import ConversionCancelled, Options, convert, diagnose
-
-APP_NAME = "PDF2MD"
-ORG_NAME = "PDF2MD"
-
-# حدّ عرض المعاينة — يحمي QPlainTextEdit من التجمّد على الكتب الكبيرة
-PREVIEW_LIMIT = 200_000
-TAGLINE = "استخراج نص عربي سليم من PDF المعطوب الرباطات، وتحويله إلى Markdown منظَّم"
-
-# المسار الكامل يُخزَّن في بيانات عنصر القائمة، ويُعرض اسم الملف وحده
-PATH_ROLE = Qt.ItemDataRole.UserRole
-
-# ── لوحة الألوان ──
-# النِّسَب أدناه محسوبة بمعادلة WCAG على الخلفيتين CREAM و PANEL.
-BROWN = "#6B4423"
-GOLD = "#C9A227"
-CREAM = "#FAF6EE"
-INK = "#2E2418"
-LINE = "#E0D6C2"        # إطار زخرفي للمجموعات — 1.4:1، لا يحمل معنى
-OK = "#2E7D52"
-BAD = "#B3261E"
-PANEL = "#FFFDF8"
-
-# حدّ عناصر الإدخال. الحقل أبيض على خلفية كريمية (تباين 1.08:1)، فالحدّ هو
-# وسيلة تمييزه الوحيدة — وWCAG 2.2 SC 1.4.11 يطلب 3:1 لحدود عناصر التحكم.
-# كان LINE (1.44:1 على الأبيض) فلم تكن الحقول تُرى أصلًا. هذا 3.36:1.
-FIELD_LINE = "#9C8A66"
-
-# مؤشّر التركيز. GOLD يعطي 2.24:1 على CREAM — دون حدّ SC 1.4.11 نفسه، أي أن
-# قاعدة :focus كانت موجودة وغير مرئية عمليًا. هذا 3.52:1 على CREAM
-# و3.73:1 على PANEL. ويبقى GOLD لشريط التقدّم والتبويب: عنصران زخرفيان.
-GOLD_FOCUS = "#A07F15"
-
-# Amiri للعناوين و Cairo للمتن، مع بدائل مضمونة على كل نظام
-SERIF = '"Amiri", "Scheherazade New", "Traditional Arabic", serif'
-SANS = '"Cairo", "Segoe UI", "Tahoma", "Noto Sans Arabic", sans-serif'
-
-QSS = f"""
-* {{ font-family: {SANS}; font-size: 13px; color: {INK}; }}
-QMainWindow, QWidget {{ background: {CREAM}; }}
-QLabel#title {{ font-family: {SERIF}; font-size: 30px; font-weight: 700;
-                color: {BROWN}; }}
-QLabel#tagline {{ color: #7A6A55; }}
-QLabel#section {{ font-family: {SERIF}; font-size: 15px; color: {BROWN};
-                  font-weight: 700; }}
-QGroupBox {{
-    border: 1px solid {LINE}; border-radius: 10px; background: {PANEL};
-    margin-top: 14px; padding: 12px 10px 10px 10px;
-}}
-QGroupBox::title {{
-    subcontrol-origin: margin; right: 14px; padding: 2px 8px;
-    font-family: {SERIF}; font-size: 15px; color: {BROWN}; font-weight: 700;
-}}
-QPushButton {{
-    background: {BROWN}; color: #FFF9EC; border: none;
-    border-radius: 8px; padding: 9px 18px; font-weight: 700;
-}}
-QPushButton:hover {{ background: #7D5230; }}
-/* نص الحالة المعطَّلة كان #F2ECE0 على #C4B8A6 — تباين 1.66:1 يكاد يختفي
-   أثناء التحويل. #6F6355 يرفعه إلى ~3.1:1 ويبقى واضحًا أنه معطَّل. */
-QPushButton:disabled {{ background: #C4B8A6; color: #6F6355; }}
-QPushButton#ghost {{ background: transparent; color: {BROWN};
-                     border: 1px solid {BROWN}; }}
-QPushButton#ghost:hover {{ background: #F0E7D6; }}
-QPushButton#gold {{ background: {GOLD}; color: #3A2C08; }}
-QPushButton#gold:hover {{ background: #D9B23B; }}
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QListWidget,
-QPlainTextEdit, QTableWidget {{
-    background: #FFFFFF; border: 1px solid {FIELD_LINE};
-    border-radius: 8px; padding: 6px; selection-background-color: {GOLD};
-    selection-color: {INK};
-}}
-/* المعاينة والسجل نصّ عربي يُقرأ لا كود يُحاذى عموديًا — والخط الأحادي
-   اللاتيني كان يخرجه مفكّك الوصل لانعدام تغطيته العربية. */
-QPlainTextEdit {{ font-family: {SANS}; font-size: 13px; }}
-QProgressBar {{
-    border: 1px solid {LINE}; border-radius: 8px; height: 20px;
-    text-align: center; background: #FFFFFF;
-}}
-QProgressBar::chunk {{ background: {GOLD}; border-radius: 7px; }}
-QTabBar::tab {{
-    background: transparent; padding: 8px 18px;
-    border-bottom: 3px solid transparent; font-weight: 600;
-}}
-QTabBar::tab:selected {{ color: {BROWN}; border-bottom: 3px solid {GOLD}; }}
-QTabWidget::pane {{ border: 1px solid {LINE}; border-radius: 10px;
-                    background: {PANEL}; }}
-QHeaderView::section {{
-    background: #F3EADA; padding: 6px; border: none;
-    border-bottom: 1px solid {LINE}; font-weight: 700; color: {BROWN};
-}}
-QCheckBox::indicator {{ width: 17px; height: 17px; }}
-/* مؤشّر تركيز ظاهر: بدونه يفقد المتنقّل بلوحة المفاتيح موضعه بين ثمانية
-   مربّعات اختيار متتالية فوق خلفية كريمية مسطّحة. اللون GOLD_FOCUS لا GOLD
-   لأن الأخير 2.24:1 على الخلفية — دون 3:1 التي يفرضها WCAG 2.2 SC 1.4.11
-   للمؤشّرات غير النصية، أي أن القاعدة كانت تُطبَّق ولا تُرى. */
-QPushButton:focus, QCheckBox:focus, QComboBox:focus, QLineEdit:focus,
-QSpinBox:focus, QDoubleSpinBox:focus, QListWidget:focus,
-QPlainTextEdit:focus, QTableWidget:focus {{
-    border: 2px solid {GOLD_FOCUS};
-}}
-QTabBar::tab:focus {{ border-bottom: 3px solid {GOLD_FOCUS}; }}
-QStatusBar {{ background: #F3EADA; color: {BROWN}; }}
-QScrollArea {{ border: none; background: transparent; }}
-QSplitter::handle {{ background: transparent; }}
-"""
-
-PROFILES = [
-    ("تلقائي — كشف العناوين بحجم الخط", "auto"),
-    ("نظام/لائحة سعودية — الباب والفصل والمادة", "saudi_law"),
-    ("نص عادي — فقرات بلا عناوين", "plain"),
-]
-OCR_MODES = [
-    ("تلقائي — الصفحة المعطوبة أو الممسوحة وحدها", "auto"),
-    ("بلا OCR — طبقة النص الأصلية دائمًا", "never"),
-    ("دائمًا — كل الصفحات (بطيء)", "always"),
-]
-FOOTNOTES = [
-    ("اقتباس منفصل  >", "quote"),
-    ("ضمن النص", "inline"),
-    ("حذف", "drop"),
-]
-
-
-# ═══════════════════ خيوط العمل ═══════════════════
-
-class ConvertWorker(QThread):
-    """يحوّل ملفًا واحدًا خارج خيط الواجهة حتى لا تتجمّد."""
-
-    progress = pyqtSignal(int, str)
-    logline = pyqtSignal(str)
-    done = pyqtSignal(str, dict, str)      # md, stats, out_path
-    failed = pyqtSignal(str)
-    cancelled = pyqtSignal()
-
-    def __init__(self, pdf, opt, out_path, cancel):
-        super().__init__()
-        self.pdf, self.opt, self.out_path = pdf, opt, out_path
-        self.cancel = cancel
-
-    def run(self):
-        try:
-            md, st = convert(
-                self.pdf, self.opt,
-                progress=lambda p, m: self.progress.emit(p, m),
-                log=lambda m: self.logline.emit(m),
-                cancel=self.cancel,
-            )
-            if self.out_path:
-                ensure_parent(self.out_path)
-                with open(self.out_path, "w", encoding="utf-8") as f:
-                    f.write(md)
-            self.done.emit(md, st, self.out_path or "")
-        except ConversionCancelled:
-            self.cancelled.emit()
-        except Exception:
-            self.failed.emit(traceback.format_exc())
-
-
-class DiagWorker(QThread):
-    """فحص تشخيصي على عيّنة صفحات."""
-
-    progress = pyqtSignal(int, str)
-    done = pyqtSignal(dict)
-    failed = pyqtSignal(str)
-    cancelled = pyqtSignal()
-
-    def __init__(self, pdf, cancel):
-        super().__init__()
-        self.pdf = pdf
-        self.cancel = cancel
-
-    def run(self):
-        try:
-            self.done.emit(diagnose(
-                self.pdf,
-                progress=lambda p, m: self.progress.emit(p, m),
-                cancel=self.cancel))
-        except ConversionCancelled:
-            self.cancelled.emit()
-        except Exception:
-            self.failed.emit(traceback.format_exc())
-
+from .gui_panels import DiagnosticsView, OptionsPanel
+from .gui_theme import (
+    APP_NAME,
+    ORG_NAME,
+    PATH_ROLE,
+    PREVIEW_LIMIT,
+    QSS,
+    TAGLINE,
+)
+from .gui_workers import ConvertWorker, DiagWorker
 
 # ═══════════════════ النافذة ═══════════════════
 
@@ -258,6 +75,8 @@ class MainWindow(QMainWindow):
         self._batch_total = 0
         self._batch_done = 0
         self._settings = QSettings(ORG_NAME, APP_NAME)
+        # اللوحة تُبنى قبل النافذة لأن _build يركّبها في مكانها
+        self.opts = OptionsPanel()
         self._build()
         self._load_settings()
 
@@ -317,7 +136,7 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(inner)
         v.setContentsMargins(0, 0, 6, 0)
         v.addWidget(self._files_box())
-        v.addWidget(self._options_box())
+        v.addWidget(self.opts)
         v.addWidget(self._output_box())
         v.addStretch()
 
@@ -387,125 +206,6 @@ class MainWindow(QMainWindow):
         g.addLayout(row)
         return box
 
-    def _options_box(self):
-        box = QGroupBox("الخيارات")
-        gl = QGridLayout(box)
-        gl.setVerticalSpacing(8)
-        r = 0
-
-        # setBuddy يربط اللصيقة بحقلها برمجيًا لا بصريًا فقط — بدونه يعلن
-        # قارئ الشاشة «صندوق تحرير» بلا اسم، لأن الشبكة تجاور ولا تربط.
-        def labelled(text, widget, row):
-            lab = QLabel(text)
-            lab.setBuddy(widget)
-            widget.setAccessibleName(text)
-            gl.addWidget(lab, row, 0)
-            return lab
-
-        self.cb_profile = QComboBox()
-        self.cb_profile.addItems([lbl for lbl, _ in PROFILES])
-        labelled("نمط المستند", self.cb_profile, r)
-        gl.addWidget(self.cb_profile, r, 1)
-        r += 1
-
-        self.ed_title = QLineEdit()
-        self.ed_title.setPlaceholderText("اتركه فارغًا لبلا عنوان")
-        labelled("العنوان الرئيسي", self.ed_title, r)
-        gl.addWidget(self.ed_title, r, 1)
-        r += 1
-
-        self.cb_foot = QComboBox()
-        self.cb_foot.addItems([lbl for lbl, _ in FOOTNOTES])
-        labelled("الحواشي", self.cb_foot, r)
-        gl.addWidget(self.cb_foot, r, 1)
-        r += 1
-
-        gl.addWidget(QLabel("مستوى العناوين"), r, 0)
-        hr = QHBoxLayout()
-        self.sp_top = QSpinBox()
-        self.sp_top.setRange(1, 5)
-        self.sp_top.setValue(2)
-        self.sp_top.setAccessibleName("مستوى العنوان الرئيسي")
-        self.sp_sub = QSpinBox()
-        self.sp_sub.setRange(1, 6)
-        self.sp_sub.setValue(3)
-        self.sp_sub.setAccessibleName("مستوى العنوان الفرعي")
-        lab_top, lab_sub = QLabel("رئيسي"), QLabel("فرعي")
-        lab_top.setBuddy(self.sp_top)
-        lab_sub.setBuddy(self.sp_sub)
-        hr.addWidget(lab_top)
-        hr.addWidget(self.sp_top)
-        hr.addWidget(lab_sub)
-        hr.addWidget(self.sp_sub)
-        hr.addStretch()
-        gl.addLayout(hr, r, 1)
-        r += 1
-
-        gl.addWidget(QLabel("نطاق الصفحات"), r, 0)
-        hr2 = QHBoxLayout()
-        self.sp_from = QSpinBox()
-        self.sp_from.setRange(0, 99999)
-        self.sp_from.setAccessibleName("أول صفحة")
-        self.sp_to = QSpinBox()
-        self.sp_to.setRange(0, 99999)
-        self.sp_to.setAccessibleName("آخر صفحة")
-        lab_from, lab_to = QLabel("من"), QLabel("إلى")
-        lab_from.setBuddy(self.sp_from)
-        lab_to.setBuddy(self.sp_to)
-        hr2.addWidget(lab_from)
-        hr2.addWidget(self.sp_from)
-        hr2.addWidget(lab_to)
-        hr2.addWidget(self.sp_to)
-        # الرقم بالصيغة نفسها التي يعرضها QSpinBox بجانبه — لا هندي مقابل غربي
-        hr2.addWidget(QLabel("(0 = الكل)"))
-        hr2.addStretch()
-        gl.addLayout(hr2, r, 1)
-        r += 1
-
-        gl.addWidget(QLabel("فجوة الفقرة"), r, 0)
-        hr3 = QHBoxLayout()
-        self.sp_gap = QDoubleSpinBox()
-        self.sp_gap.setRange(0.20, 3.00)
-        self.sp_gap.setSingleStep(0.05)
-        self.sp_gap.setDecimals(2)
-        self.sp_gap.setValue(0.75)
-        self.sp_gap.setToolTip(
-            "فجوة رأسية أكبر من (القيمة × ارتفاع السطر) تبدأ فقرة جديدة")
-        self.sp_gap.setAccessibleName("فجوة الفقرة")
-        hr3.addWidget(self.sp_gap)
-        hr3.addWidget(QLabel("× ارتفاع السطر"))
-        hr3.addStretch()
-        gl.addLayout(hr3, r, 1)
-        r += 1
-
-        self.cb_ocr = QComboBox()
-        self.cb_ocr.addItems([name for name, _ in OCR_MODES])
-        gl.addWidget(QLabel("قراءة ضوئية (OCR)"), r, 0)
-        gl.addWidget(self.cb_ocr, r, 1)
-        r += 1
-        if not ocr_engine.available():
-            self.cb_ocr.setEnabled(False)
-            note = QLabel("Tesseract غير مثبَّت — الصفحات الممسوحة ضوئيًا "
-                          "والملفات ذات خريطة الخط المكسورة ستخرج ناقصة.")
-            note.setWordWrap(True)
-            gl.addWidget(note, r, 0, 1, 2)
-            r += 1
-
-        self.ck_lig = QCheckBox("إصلاح الرباطات المقلوبة")
-        self.ck_ink = QCheckBox("فحص الحبر — أدق، أبطأ ٣×")
-        self.ck_dig = QCheckBox("توحيد الأرقام الهندية ← عربية")
-        self.ck_hdr = QCheckBox("حذف الترويسة والتذييل المتكررة")
-        self.ck_wmk = QCheckBox("حذف العلامة المائية — نص مائل أو باهت")
-        self.ck_toc = QCheckBox("تخطّي صفحات الفهرس الأصلية")
-        self.ck_gen = QCheckBox("توليد فهرس تلقائي بروابط داخلية")
-        self.ck_tbl = QCheckBox("بناء جداول Markdown من صفوف الجداول")
-        for c in (self.ck_lig, self.ck_ink, self.ck_dig, self.ck_hdr,
-                  self.ck_wmk, self.ck_toc, self.ck_gen, self.ck_tbl):
-            c.setChecked(True)
-            gl.addWidget(c, r, 0, 1, 2)
-            r += 1
-        return box
-
     def _output_box(self):
         box = QGroupBox("المخرَج")
         g = QHBoxLayout(box)
@@ -530,39 +230,14 @@ class MainWindow(QMainWindow):
         self.preview.setAccessibleName("معاينة الناتج")
         self.tabs.addTab(self.preview, "معاينة الناتج")
 
-        self.tabs.addTab(self._diag_tab(), "التشخيص")
+        self.diag = DiagnosticsView()
+        self.tabs.addTab(self.diag, "التشخيص")
 
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setAccessibleName("سجل التنفيذ")
         self.tabs.addTab(self.log, "السجل")
         return self.tabs
-
-    def _diag_tab(self):
-        w = QWidget()
-        v = QVBoxLayout(w)
-
-        self.diag_info = QLabel("شغّل «فحص تشخيصي» لمعرفة حالة الملف قبل التحويل.")
-        self.diag_info.setWordWrap(True)
-        self.diag_info.setTextFormat(Qt.TextFormat.RichText)
-        v.addWidget(self.diag_info)
-
-        self.tbl = QTableWidget(0, 5)
-        self.tbl.setHorizontalHeaderLabels(
-            ["الكلمة", "سليمة قبل", "تالفة قبل", "سليمة بعد", "تالفة بعد"])
-        self.tbl.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch)
-        self.tbl.verticalHeader().setVisible(False)
-        self.tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.tbl.setMaximumHeight(260)
-        v.addWidget(self.tbl)
-
-        v.addWidget(QLabel("عيّنة من النص بعد الإصلاح:"))
-        self.diag_sample = QPlainTextEdit()
-        self.diag_sample.setReadOnly(True)
-        self.diag_sample.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        v.addWidget(self.diag_sample, 1)
-        return w
 
     # ---------- السحب والإفلات ----------
 
@@ -665,32 +340,16 @@ class MainWindow(QMainWindow):
 
     # ---------- الإعدادات ----------
 
-    def _num(self, key, default, cast=int):
-        """
-        يقرأ قيمة رقمية من الإعدادات، ويسقط إلى الافتراضي عند أي تلف.
-
-        `int(s.value(...))` المكشوف كان يرمي ValueError داخل __init__ عند
-        قيمة غير رقمية (تحرير يدوي لملف الإعدادات، أو ترقية، أو تلف)،
-        فلا يُقلع التطبيق أصلًا ولا يعرف المستخدم سببًا ولا مخرجًا.
-        """
-        try:
-            return cast(self._settings.value(key, default))
-        except (TypeError, ValueError):
-            return default
+    # ---------- الإعدادات ----------
 
     def _load_settings(self):
-        """يستعيد اختيارات آخر جلسة — بدونها يُعاد ضبط كل شيء كل تشغيل."""
-        s = self._settings
-        self.cb_profile.setCurrentIndex(self._num("profile", 0))
-        self.cb_foot.setCurrentIndex(self._num("footnotes", 0))
-        self.cb_ocr.setCurrentIndex(self._num("ocr", 0))
-        self.ed_out.setText(s.value("out_dir", "", type=str))
-        self.sp_top.setValue(self._num("h_top", 2))
-        self.sp_sub.setValue(self._num("h_sub", 3))
-        self.sp_gap.setValue(self._num("para_gap", 0.75, float))
-        for key, box in self._checkboxes().items():
-            box.setChecked(s.value(key, True, type=bool))
-        geo = s.value("geometry")
+        """
+        يستعيد اختيارات آخر جلسة. الخيارات تحمّلها لوحتها، والنافذة تحمّل
+        ما تملكه وحدها: مجلد الحفظ ومقاس النافذة.
+        """
+        self.opts.load(self._settings)
+        self.ed_out.setText(self._settings.value("out_dir", "", type=str))
+        geo = self._settings.value("geometry")
         if geo is not None:
             try:
                 self.restoreGeometry(geo)
@@ -698,48 +357,15 @@ class MainWindow(QMainWindow):
                 pass
 
     def _save_settings(self):
-        s = self._settings
-        s.setValue("profile", self.cb_profile.currentIndex())
-        s.setValue("footnotes", self.cb_foot.currentIndex())
-        s.setValue("ocr", self.cb_ocr.currentIndex())
-        s.setValue("out_dir", self.ed_out.text().strip())
-        s.setValue("h_top", self.sp_top.value())
-        s.setValue("h_sub", self.sp_sub.value())
-        s.setValue("para_gap", self.sp_gap.value())
-        for key, box in self._checkboxes().items():
-            s.setValue(key, box.isChecked())
-        s.setValue("geometry", self.saveGeometry())
-
-    def _checkboxes(self):
-        return {"fix_ligatures": self.ck_lig, "check_ink": self.ck_ink,
-                "unify_digits": self.ck_dig, "drop_headers": self.ck_hdr,
-                "drop_watermark": self.ck_wmk, "drop_toc": self.ck_toc,
-                "build_toc": self.ck_gen, "tables": self.ck_tbl}
+        self.opts.save(self._settings)
+        self._settings.setValue("out_dir", self.ed_out.text().strip())
+        self._settings.setValue("geometry", self.saveGeometry())
 
     # ---------- الحالة ----------
 
     def options(self):
-        return Options(
-            profile=PROFILES[self.cb_profile.currentIndex()][1],
-            fix_ligatures=self.ck_lig.isChecked(),
-            check_ink=self.ck_ink.isChecked(),
-            unify_digits=self.ck_dig.isChecked(),
-            drop_headers=self.ck_hdr.isChecked(),
-            drop_watermark=self.ck_wmk.isChecked(),
-            drop_toc=self.ck_toc.isChecked(),
-            footnotes=FOOTNOTES[self.cb_foot.currentIndex()][1],
-            build_toc=self.ck_gen.isChecked(),
-            tables=self.ck_tbl.isChecked(),
-            title=self.ed_title.text().strip(),
-            page_from=self.sp_from.value(),
-            page_to=self.sp_to.value(),
-            h_top=self.sp_top.value(),
-            h_sub=self.sp_sub.value(),
-            para_gap=self.sp_gap.value(),
-            # القائمة معطَّلة حين لا يوجد Tesseract، فتبقى على "تلقائي"
-            # ويتكفّل المحرّك بالتحذير مرة واحدة في سجلّ التحويل.
-            ocr=OCR_MODES[self.cb_ocr.currentIndex()][1],
-        )
+        return self.opts.options()
+
 
     def start_worker(self, worker):
         """يشغّل خيطًا ويحتفظ بمرجعه حتى ينتهي."""
@@ -839,50 +465,7 @@ class MainWindow(QMainWindow):
 
     def show_diag(self, d):
         self.busy(False)
-
-        if not d["has_text"]:
-            verdict = ("الملف مصوّر بلا طبقة نص — يحتاج OCR قبل التحويل."
-                       if d["needs_ocr"] else "لا توجد طبقة نص في هذا الملف.")
-            color = BAD
-        else:
-            verdict, ok = verdict_of(d["rows"])
-            color = OK if ok else BAD
-
-        # بيانات PDF الوصفية والأزواج نص خارجي غير موثوق داخل RichText
-        pairs = html.escape(
-            "، ".join(f"{k}×{v}" for k, v in d["pairs"]) or "—")
-        self.diag_info.setText(
-            f"<b>الصفحات:</b> {d['pages']} &nbsp;|&nbsp; "
-            f"<b>العيّنة:</b> {d['sampled']} صفحة &nbsp;|&nbsp; "
-            f"<b>الخطوط:</b> {d['fonts']} &nbsp;|&nbsp; "
-            f"<b>طبقة نص:</b> {'نعم' if d['has_text'] else 'لا — يحتاج OCR'}<br>"
-            f"<b>المنتج:</b> {html.escape(d['producer'] or '—')} &nbsp;|&nbsp; "
-            f"<b>المُنشئ:</b> {html.escape(d['creator'] or '—')}<br>"
-            f"<b>رباطات مُصلَحة في العيّنة:</b> {d['ligatures']:,} ({pairs})<br>"
-            f"<b style='color:{color}'>{verdict}</b>"
-        )
-
-        self.tbl.setRowCount(len(d["rows"]))
-        for i, r in enumerate(d["rows"]):
-            # عمودا النتيجة يحملان رمزًا مع اللون — لا نعتمد على اللون وحده
-            values = [r["word"], r["before_ok"],
-                      f"✗ {r['before_bad']}" if r["before_bad"] else r["before_bad"],
-                      r["after_ok"],
-                      f"✓ {r['after_bad']}" if not r["after_bad"]
-                      else f"✗ {r['after_bad']}"]
-            for j, v in enumerate(values):
-                item = QTableWidgetItem(str(v))
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                # ألوان اللوحة نفسها لا ألوان Qt المدمجة — وإلا اجتمع أحمر
-                # Qt الفاقع وأحمر اللوحة الهادئ في الشاشة نفسها
-                if j == 2 and r["before_bad"]:
-                    item.setForeground(QColor(BAD))
-                if j == 4:
-                    item.setForeground(QColor(OK) if not r["after_bad"]
-                                       else QColor(BAD))
-                self.tbl.setItem(i, j, item)
-
-        self.diag_sample.setPlainText(d["sample"])
+        verdict = self.diag.show_result(d)
         self.say(f"  رباطات في العيّنة: {d['ligatures']:,} | {verdict}")
         self.say_status("انتهى الفحص")
 
@@ -908,7 +491,7 @@ class MainWindow(QMainWindow):
             self.note("تنبيه", "أضف ملف PDF أولًا.")
             return
         # CLI يرفض النطاق المقلوب — الواجهة كذلك، بدل تجاهله بصمت
-        pf, pt = self.sp_from.value(), self.sp_to.value()
+        pf, pt = self.opts.page_range()
         if pf and pt and pt < pf:
             self.warn("نطاق الصفحات",
                       f"نهاية النطاق ({pt}) أصغر من بدايته ({pf}).")
