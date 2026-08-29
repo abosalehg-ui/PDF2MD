@@ -254,8 +254,10 @@ def test_manifest_lists_every_engine_source():
     listed = set(_manifest()["sources"])
     on_disk = {f for f in os.listdir(os.path.join(ROOT, "src"))
                if f.endswith(".py")}
-    # gui.py وحده يبقى خارج المتصفّح: PyQt6 لا يعمل على Pyodide
-    assert listed == on_disk - {"gui.py", "cli.py"}
+    # وحدات `gui*` تبقى خارج المتصفّح: PyQt6 لا يعمل على Pyodide. و`cli.py`
+    # كذلك: لا سطر أوامر في لسان متصفّح. وما عداهما يُنسَخ كما هو.
+    desktop_only = {f for f in on_disk if f.startswith("gui")} | {"cli.py"}
+    assert listed == on_disk - desktop_only
 
 
 def test_page_references_existing_assets():

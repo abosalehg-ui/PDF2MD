@@ -24,6 +24,7 @@ from PyQt6.QtCore import QSettings, Qt  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from src import gui  # noqa: E402
+from src.gui_panels import OptionsPanel  # noqa: E402
 from src.structure import Options  # noqa: E402
 
 
@@ -78,23 +79,23 @@ def test_minimum_size_fits_a_1366x768_screen(window):
 
 def test_settings_round_trip(window, app, tmp_path, monkeypatch):
     """ما يُحفظ عند الخروج يُستعاد عند التشغيل التالي — كل حقل منه."""
-    window.cb_profile.setCurrentIndex(1)
-    window.cb_foot.setCurrentIndex(2)
-    window.sp_top.setValue(3)
-    window.sp_sub.setValue(4)
-    window.sp_gap.setValue(1.25)
-    window.ck_ink.setChecked(False)
+    window.opts.cb_profile.setCurrentIndex(1)
+    window.opts.cb_foot.setCurrentIndex(2)
+    window.opts.sp_top.setValue(3)
+    window.opts.sp_sub.setValue(4)
+    window.opts.sp_gap.setValue(1.25)
+    window.opts.ck_ink.setChecked(False)
     window.ed_out.setText(str(tmp_path / "out"))
     window._save_settings()
 
     fresh = gui.MainWindow()
     try:
-        assert fresh.cb_profile.currentIndex() == 1
-        assert fresh.cb_foot.currentIndex() == 2
-        assert fresh.sp_top.value() == 3
-        assert fresh.sp_sub.value() == 4
-        assert fresh.sp_gap.value() == pytest.approx(1.25)
-        assert fresh.ck_ink.isChecked() is False
+        assert fresh.opts.cb_profile.currentIndex() == 1
+        assert fresh.opts.cb_foot.currentIndex() == 2
+        assert fresh.opts.sp_top.value() == 3
+        assert fresh.opts.sp_sub.value() == 4
+        assert fresh.opts.sp_gap.value() == pytest.approx(1.25)
+        assert fresh.opts.ck_ink.isChecked() is False
         assert fresh.ed_out.text() == str(tmp_path / "out")
     finally:
         fresh.close()
@@ -119,9 +120,9 @@ def test_corrupt_settings_do_not_block_startup(app, tmp_path, monkeypatch):
 
     win = gui.MainWindow()          # كان ينفجر هنا
     try:
-        assert win.sp_top.value() == 2          # سقط إلى الافتراضي
-        assert win.sp_sub.value() == 3
-        assert win.sp_gap.value() == pytest.approx(0.75)
+        assert win.opts.sp_top.value() == 2          # سقط إلى الافتراضي
+        assert win.opts.sp_sub.value() == 3
+        assert win.opts.sp_gap.value() == pytest.approx(0.75)
     finally:
         win.close()
 
@@ -129,12 +130,12 @@ def test_corrupt_settings_do_not_block_startup(app, tmp_path, monkeypatch):
 # ═══════════ الخيارات: الواجهة تبني Options مطابقًا لحالتها ═══════════
 
 def test_options_reflect_widget_state(window):
-    window.cb_profile.setCurrentIndex(1)            # saudi_law
-    window.cb_foot.setCurrentIndex(2)               # drop
-    window.ed_title.setText("  نظام العمل  ")
-    window.sp_from.setValue(5)
-    window.sp_to.setValue(9)
-    window.ck_tbl.setChecked(False)
+    window.opts.cb_profile.setCurrentIndex(1)            # saudi_law
+    window.opts.cb_foot.setCurrentIndex(2)               # drop
+    window.opts.ed_title.setText("  نظام العمل  ")
+    window.opts.sp_from.setValue(5)
+    window.opts.sp_to.setValue(9)
+    window.opts.ck_tbl.setChecked(False)
 
     opt = window.options()
     assert opt.profile == "saudi_law"
@@ -153,13 +154,37 @@ def test_every_boolean_option_has_a_checkbox(window):
     boolean_fields = {name for name, field in Options.__dataclass_fields__.items()
                       if field.type in ("bool", bool)}
     assert boolean_fields, "لم يُقرأ أي حقل منطقي — تغيّر شكل dataclass"
-    assert boolean_fields == set(window._checkboxes())
+    assert boolean_fields == set(window.opts.checkboxes())
 
 
 def test_every_checkbox_maps_to_a_real_option(window):
     """والعكس: مربّع لا يقابله حقل في Options يعني إعدادًا يُحفظ ولا يُستعمل."""
-    for key in window._checkboxes():
+    for key in window.opts.checkboxes():
         assert key in Options.__dataclass_fields__
+
+
+def test_options_panel_stands_alone(app, tmp_path):
+    """
+    اللوحة تُبنى وتُختبر بلا نافذة ولا طابور ولا خيوط — وهو مكسب فصلها
+    عن `MainWindow`: الخريطة بين عناصر التحكم و`Options` أخطر ما في
+    الواجهة على صحّة الناتج، وصارت تُختبر وحدةً مستقلة.
+    """
+    panel = OptionsPanel()
+    panel.cb_profile.setCurrentIndex(1)
+    panel.sp_gap.setValue(1.10)
+    panel.ck_ink.setChecked(False)
+
+    opt = panel.options()
+    assert opt.profile == "saudi_law"
+    assert opt.para_gap == pytest.approx(1.10)
+    assert opt.check_ink is False
+
+    # ودورة الحفظ والاستعادة تخصّ اللوحة وحدها كذلك
+    store = QSettings(str(tmp_path / "panel.ini"), QSettings.Format.IniFormat)
+    panel.save(store)
+    fresh = OptionsPanel()
+    fresh.load(store)
+    assert fresh.options() == opt
 
 
 # ═══════════ الحراسة قبل بدء الدفعة ═══════════
@@ -167,8 +192,8 @@ def test_every_checkbox_maps_to_a_real_option(window):
 def test_reversed_page_range_blocks_the_batch(window, tmp_path, monkeypatch):
     """الواجهة ترفض النطاق المقلوب مثل سطر الأوامر، بدل تجاهله بصمت."""
     window.add_files([str(tmp_path / "أي.pdf")])
-    window.sp_from.setValue(9)
-    window.sp_to.setValue(3)
+    window.opts.sp_from.setValue(9)
+    window.opts.sp_to.setValue(3)
 
     warned = []
     monkeypatch.setattr(window, "warn", lambda t, m: warned.append(m))
