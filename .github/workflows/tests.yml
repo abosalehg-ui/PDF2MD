@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# الـActions مثبَّتة ببصمة الالتزام لا بوسم الإصدار. الوسم `v4` مرجعٌ
+# متحرّك يملك صاحبُ الـaction تحريكه في أي لحظة، وهذا المستودع ينشر منه
+# موقعًا عامًّا — فوسمٌ مُستبدَل يعني شيفرة غريبة تعمل في سلسلة النشر.
+# البصمة لا تتحرّك. والتعليق بجانبها يقول أي إصدار هي، وDependabot يرفع
+# PR بترقيتها كما يفعل مع الوسوم (انظر .github/dependabot.yml).
 # الـworkflow لا يستعمل GITHUB_TOKEN إطلاقًا، ويشتغل على pull_request من
 # التفرّعات — فالصلاحية الافتراضية (قد تكون كتابة) زائدة بلا مقابل.
 permissions:
@@ -16,8 +21,8 @@ jobs:
       matrix:
         python-version: ["3.9", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
       # وظيفة المحرّك: بلا PyQt6 عمدًا — تثبت أن سطر الأوامر يعمل بدونه.
@@ -38,8 +43,8 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.12"
       # مكتبات النظام التي يربطها Qt6 ولا تأتي مع العدّاء افتراضيًا
@@ -55,11 +60,11 @@ jobs:
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: "20"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.12"
       - run: node --test tests/js/engine.test.mjs tests/js/zip.test.mjs
@@ -67,8 +72,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.12"
       - run: pip install ruff
@@ -77,8 +82,8 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.12"
       - run: pip install pip-audit
