@@ -13,6 +13,12 @@ name: pages
 # فأُزيلت: أتمتةٌ لا تعمل تُبدّل رسالة خطأ واضحة تقول «فعّل Pages» برسالة
 # غامضة تقول «مورد غير متاح».
 
+# الـActions مثبَّتة ببصمة الالتزام لا بوسم الإصدار. الوسم `v4` مرجعٌ
+# متحرّك يملك صاحبُ الـaction تحريكه في أي لحظة، وهذا المستودع ينشر منه
+# موقعًا عامًّا — فوسمٌ مُستبدَل يعني شيفرة غريبة تعمل في سلسلة النشر.
+# البصمة لا تتحرّك. والتعليق بجانبها يقول أي إصدار هي، وDependabot يرفع
+# PR بترقيتها كما يفعل مع الوسوم (انظر .github/dependabot.yml).
+
 on:
   push:
     branches: [main]
@@ -43,9 +49,9 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.12"
 
@@ -64,11 +70,11 @@ jobs:
       # تسقط هنا برسالة صريحة إن لم يكن Pages مفعّلًا على المستودع — انظر
       # الخطوة اليدوية في أعلى الملف. السقوط مقصود: نشرةٌ تمضي وتترك الموقع
       # غير منشور أسوأ من نشرة تقف وتقول السبب.
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b  # v5.0.0
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa  # v3.0.1
         with:
           path: _site
 
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e  # v4.0.5
