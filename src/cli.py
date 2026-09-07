@@ -17,7 +17,7 @@ import sys
 from . import ocr
 from .common import ensure_parent, out_path_for, stats_summary, verdict_of
 from .core import __version__
-from .structure import Options, convert, diagnose
+from .structure import LIMITS, Options, convert, diagnose
 
 
 def build_parser():
@@ -35,17 +35,28 @@ def build_parser():
                    help="نمط المستند (الافتراضي: auto)")
     p.add_argument("--title", default="", help="العنوان الرئيسي في أول الملف")
     p.add_argument("--pages", help="نطاق الصفحات، مثل 10-40 أو صفحة واحدة: 12")
+    # الوضعان quote و inline يضعان الحاشية في نهاية القسم كلاهما، ويفترقان
+    # في علامة الاقتباس وحدها — و«inline» اسم موروث لا يصف موضعًا.
     p.add_argument("--footnotes", default="quote",
                    choices=["quote", "inline", "drop"],
-                   help="معالجة الحواشي (الافتراضي: quote)")
+                   help="معالجة الحواشي: quote في نهاية القسم مقتبسة، "
+                        "inline في نهاية القسم بلا اقتباس، drop حذفها "
+                        "(الافتراضي: quote)")
     # المستويات محدودة بما يفهمه Markdown — بلا حدّ ينتج «--h-top 400»
-    # عنوانًا بأربعمئة #
-    p.add_argument("--h-top", type=int, default=2, choices=range(1, 7),
-                   metavar="{1..6}", help="مستوى العناوين العليا")
-    p.add_argument("--h-sub", type=int, default=3, choices=range(1, 7),
-                   metavar="{1..6}", help="مستوى العناوين الفرعية")
+    # عنوانًا بأربعمئة #. والمدى من structure.LIMITS لا مكتوبًا هنا، فهو
+    # نفسه الذي تعرضه الواجهة الرسومية وصفحة الويب.
+    h_lo, h_hi = LIMITS["h_top"]
+    s_lo, s_hi = LIMITS["h_sub"]
+    g_lo, g_hi = LIMITS["para_gap"]
+    p.add_argument("--h-top", type=int, default=2,
+                   choices=range(h_lo, h_hi + 1),
+                   metavar=f"{{{h_lo}..{h_hi}}}", help="مستوى العناوين العليا")
+    p.add_argument("--h-sub", type=int, default=3,
+                   choices=range(s_lo, s_hi + 1),
+                   metavar=f"{{{s_lo}..{s_hi}}}", help="مستوى العناوين الفرعية")
     p.add_argument("--para-gap", type=float, default=0.75,
-                   help="فجوة رأسية (× ارتفاع السطر) تبدأ فقرة")
+                   help=f"فجوة رأسية (× ارتفاع السطر) تبدأ فقرة "
+                        f"({g_lo}–{g_hi})")
     p.add_argument("--no-ink", action="store_true",
                    help="تعطيل فحص الحبر — أسرع ٣× وأقل دقة")
     p.add_argument("--no-ligatures", action="store_true",
@@ -101,10 +112,18 @@ def options_from(args):
         ocr_lang=args.ocr_lang,
         ocr_dpi=args.ocr_dpi,
     )
-    # دقة أقل من ٢٠٠ تُذيب نقاط الحروف العربية فتخرج «ب/ت/ث» متبادلة —
-    # وهو فساد صامت لا رسالة خطأ، فالرفض هنا أرحم من ناتج مغلوط.
-    if opt.ocr_dpi < 200:
-        sys.exit("دقة OCR أقل من 200 تُتلف نقاط الحروف العربية.")
+    # دقة أقل من الأرضية تُذيب نقاط الحروف العربية فتخرج «ب/ت/ث» متبادلة —
+    # وهو فساد صامت لا رسالة خطأ، فالرفض هنا أرحم من ناتج مغلوط. والسقف
+    # يمنع طلب رسمٍ بمئات الأضعاف لا يشتري تمييزًا أفضل.
+    if opt.ocr_dpi < ocr.OCR_DPI_MIN:
+        sys.exit(f"دقة OCR أقل من {ocr.OCR_DPI_MIN} تُتلف نقاط الحروف العربية.")
+    if opt.ocr_dpi > ocr.OCR_DPI_MAX:
+        sys.exit(f"دقة OCR أعلى من {ocr.OCR_DPI_MAX} ترسم الصفحة بلا فائدة "
+                 f"تمييز إضافية، وتستهلك ذاكرة بلا مقابل.")
+
+    g_lo, g_hi = LIMITS["para_gap"]
+    if not g_lo <= opt.para_gap <= g_hi:
+        sys.exit(f"فجوة الفقرة خارج المدى المسموح ({g_lo}–{g_hi}).")
     if args.pages:
         # الصفحة الواحدة تُكتب رقمًا مجردًا: `--pages 12`. بلا الجزء
         # الاختياري كان أشيع استعمال يتطلب `12-12`.
@@ -167,6 +186,14 @@ def main(argv=None):
     opt = options_from(args)
     say = (lambda m: None) if args.quiet else (lambda m: print("  " + m))
     many = len(args.pdf) > 1
+
+    # `-o` ينتهي بـ.md مع عدة ملفات دخل: القاعدة الموثَّقة تقول إن المنتهي
+    # بـ.md ملفٌ، فطلبُ ملفٍ واحد لعدة نواتج طلبٌ متناقض. وكان يمضي بصمت
+    # فيُنشئ **مجلدًا** اسمه «ناتج.md» يضع فيه ملفًا لكل PDF — مخرَجٌ لا
+    # أحد يقصده، ولا يُكتشف إلا بعد أن تنتهي الدفعة كلها.
+    if many and args.out and os.path.splitext(args.out)[1].lower() == ".md":
+        sys.exit(f"‎-o {args.out} يسمّي ملفًا واحدًا، والدخل {len(args.pdf)} "
+                 f"ملفات — مرّر مجلدًا بدل المسار المنتهي بـ.md.")
 
     for pdf in args.pdf:
         if not args.quiet:

@@ -33,6 +33,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 
 from . import core
 
@@ -48,6 +49,24 @@ OCR_LANG = "ara+eng"    # المستندات المرصودة تخلط العر�
 PSM = 6                 # «كتلة نص موحّدة» — أنسب أنماط التقطيع لصفحة مذكرة
 MIN_CONF = 30           # ثقة الكلمة تحتها تُهمَل: ضوضاء مسح لا حرفًا
 OCR_TIMEOUT = 120       # ثوانٍ لكل صفحة — حارس ضد تعليق العملية كلها
+
+# مدى الدقة المقبول. الأرضية تحمي من فساد صامت: أقل من ٢٠٠ تُذيب نقاط
+# الحروف فتخرج «ب/ت/ث» متبادلة. والسقف يحمي من طلب رسمٍ بمئات الأضعاف
+# لا يشتري تمييزًا أفضل — Tesseract لا يستفيد فوق ٦٠٠ نقطة/بوصة.
+OCR_DPI_MIN = 200
+OCR_DPI_MAX = 600
+
+# سقف بكسلات الصفحة المرسومة قبل التمييز — نظير INK_MAX_PIXELS في core.
+# أعلى منه لأن الدقة هنا هي المنتَج نفسه لا وسيلةَ قياس: تنزيلها يُفقد
+# حروفًا، فيُترك للصفحة ضِعفا ما يُترك لفحص الحبر. والسقف لازم على كل حال:
+# صفحة ١٤٤٠٠ نقطة عند ٣٠٠ نقطة/بوصة تطلب ٣٫٦ مليار بكسل (نحو ١١ غيغابايت
+# بثلاث قنوات) من ملف حجمه أقل من كيلوبايت.
+OCR_MAX_PIXELS = 80_000_000
+
+# كل كم ثانية يُسأل عن الإلغاء أثناء انتظار Tesseract. الإلغاء كان يُفحص
+# بين الصفحات وحدها، فصفحة واحدة تحجز حتى ١٢٠ ثانية لا يوقفها شيء —
+# ونافذة سطح المكتب تنتظر خيطها عشر ثوانٍ ثم تُغلق عليه وهو يعمل.
+CANCEL_POLL = 0.25
 # انزياح مركز الكلمة الرأسي (× ارتفاعها الوسيط) الذي يجعلها في صفٍّ آخر
 ROW_TOL = 0.60
 
@@ -264,21 +283,59 @@ def page_verdict(page, raw=None):
 
 # ═══════════════ التشغيل ═══════════════
 
-def _tsv(png, language, timeout):
-    """يشغّل Tesseract على صورة PNG ويرجّع أسطر TSV، أو None عند الفشل."""
+def _tsv(png, language, timeout, cancel=None):
+    """
+    يشغّل Tesseract على صورة PNG ويرجّع أسطر TSV، أو None عند الفشل أو الإلغاء.
+
+    الانتظار مقطَّع لا كتلة واحدة: `subprocess.run` بمهلة ١٢٠ ثانية يحجز
+    الخيط حجزًا تامًّا لا يقطعه إلغاء المستخدم، فزرّ «إيقاف» يبقى بلا أثر
+    حتى تنتهي الصفحة، و`closeEvent` في الواجهة الرسومية ينتظر خيطه عشر
+    ثوانٍ ثم يُتلف QThread وهو يعمل — وهو انهيار لا رسالة خطأ.
+    هنا تُنتظر العملية شرائحَ من ربع ثانية، ويُسأل عن الإلغاء بين كل
+    شريحتين، فتُقتل العملية الفرعية فور طلبه.
+
+    `input` يُمرَّر في المحاولة الأولى وحدها: `communicate` يرفض إعادة
+    تمريره بعد أن يبدأ التواصل، ويُكمل بنفسه ما بقي من الكتابة.
+    """
+    argv = ["tesseract", "stdin", "stdout", "-l", language,
+            "--psm", str(PSM), "tsv"]
     try:
-        proc = subprocess.run(
-            ["tesseract", "stdin", "stdout", "-l", language,
-             "--psm", str(PSM), "tsv"],
-            input=png, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            timeout=timeout, check=True,
+        proc = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             env=dict(os.environ, TESSDATA_PREFIX=tessdata_dir() or ""),
         )
-    except (OSError, subprocess.SubprocessError):
-        # لغة ناقصة، صورة تالفة، أو تجاوز المهلة على صفحة كثيفة. الفشل
-        # على صفحة لا يُسقط تحويل المستند — يرجع المستدعي لطبقتها الأصلية.
+    except OSError:
+        # الثنائي غير موجود أو غير قابل للتنفيذ
         return None
-    return proc.stdout.decode("utf-8", "replace").splitlines()
+
+    out = None
+    deadline = time.monotonic() + timeout
+    with proc:
+        payload = png
+        while True:
+            slice_s = min(CANCEL_POLL, max(0.0, deadline - time.monotonic()))
+            try:
+                out, _ = proc.communicate(input=payload, timeout=slice_s)
+                break
+            except subprocess.TimeoutExpired:
+                payload = None
+                stopped = cancel is not None and cancel.is_set()
+                if stopped or time.monotonic() >= deadline:
+                    # لغة ناقصة أو صورة تالفة أو صفحة كثيفة تجاوزت المهلة،
+                    # أو إلغاء صريح. الفشل على صفحة لا يُسقط تحويل المستند —
+                    # يرجع المستدعي إلى طبقتها الأصلية.
+                    proc.kill()
+                    proc.communicate()
+                    return None
+            except (OSError, ValueError):
+                proc.kill()
+                proc.communicate()
+                return None
+
+    if proc.returncode != 0 or out is None:
+        return None
+    return out.decode("utf-8", "replace").splitlines()
 
 
 def _words(tsv_lines):
@@ -368,10 +425,11 @@ def _split_rows(words):
     return [r[1] for r in rows]
 
 
-def page_lines(page, dpi=OCR_DPI, language=OCR_LANG, timeout=OCR_TIMEOUT):
+def page_lines(page, dpi=OCR_DPI, language=OCR_LANG, timeout=OCR_TIMEOUT,
+               cancel=None, log=None):
     """
     يقرأ الصفحة بالـOCR ويرجّع أسطرها بالبنية التي يرجّعها `core.page_lines`
-    — أو None عند تعذّر التشغيل.
+    — أو None عند تعذّر التشغيل أو الإلغاء.
 
     ترتيب الكلمات داخل السطر بصريّ: تنازليًا حسب الحافة اليمنى في السطر
     العربي، وتصاعديًا حسب اليسرى في اللاتيني. المميِّز يعطي كل كلمة سليمة
@@ -379,12 +437,23 @@ def page_lines(page, dpi=OCR_DPI, language=OCR_LANG, timeout=OCR_TIMEOUT):
 
     `size` مشتقّ من ارتفاع الكلمة الوسيط بعد ردّه إلى نقاط الصفحة، لأن
     بقية المسار تقارن حجم السطر بحجم المتن الغالب لتمييز العناوين.
+
+    معامل الرسم يمرّ على `core.safe_zoom`: الصفحة العملاقة تُرسم بدقة أدنى
+    بدل أن تطلب مليارات البكسلات. و`scale` المُرجَع هو نفسه الذي تُردّ به
+    إحداثيات الكلمات إلى نقاط الصفحة، فالتنزيل لا يزيح صندوقًا واحدًا.
     """
     if not tessdata_dir():
         return None
-    scale = dpi / 72.0
+    say = log or (lambda m: None)
+    scale = core.safe_zoom(page, dpi, OCR_MAX_PIXELS)
+    if scale < dpi / 72.0:
+        say(f"⚠ صفحة عملاقة — خُفّضت دقة الـOCR إلى "
+            f"{round(scale * 72)} نقطة/بوصة لتفادي نفاد الذاكرة؛ "
+            f"النص المستخرَج منها أقل دقة.")
     png = page.get_pixmap(matrix=fitz.Matrix(scale, scale)).tobytes("png")
-    grouped = _words(_tsv(png, language, timeout))
+    if cancel is not None and cancel.is_set():
+        return None
+    grouped = _words(_tsv(png, language, timeout, cancel))
     if not grouped:
         return None
 

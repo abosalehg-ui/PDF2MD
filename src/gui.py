@@ -39,14 +39,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .common import out_path_for, stats_summary
+from .common import PREVIEW_LIMIT, out_path_for, stats_summary
 from .core import __version__
 from .gui_panels import DiagnosticsView, OptionsPanel
 from .gui_theme import (
     APP_NAME,
     ORG_NAME,
     PATH_ROLE,
-    PREVIEW_LIMIT,
     QSS,
     TAGLINE,
 )
@@ -340,8 +339,6 @@ class MainWindow(QMainWindow):
 
     # ---------- الإعدادات ----------
 
-    # ---------- الإعدادات ----------
-
     def _load_settings(self):
         """
         يستعيد اختيارات آخر جلسة. الخيارات تحمّلها لوحتها، والنافذة تحمّل
@@ -365,7 +362,6 @@ class MainWindow(QMainWindow):
 
     def options(self):
         return self.opts.options()
-
 
     def start_worker(self, worker):
         """يشغّل خيطًا ويحتفظ بمرجعه حتى ينتهي."""
@@ -431,15 +427,39 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(False)
         self.say_status("جارٍ الإيقاف…")
 
+    # مهلة انتظار الخيوط عند الخروج. الإلغاء يصل الآن إلى عملية Tesseract
+    # نفسها (انظر `ocr._tsv`)، فالخيط ينتهي خلال جزء من الثانية من طلبه،
+    # وهذه المهلة احتياط لا انتظار متوقَّع.
+    CLOSE_WAIT_MS = 30_000
+
     def closeEvent(self, e):
-        """لا نُتلف QThread وهو يعمل — نسأل، نلغي، وننتظر الخيوط."""
+        """
+        لا نُتلف QThread وهو يعمل — نسأل، ونلغي، وننتظر الخيوط.
+
+        وإن نجا خيط من الانتظار كله فالخروج **يُرفض** بدل أن يمضي. كان
+        الانتظار عشر ثوانٍ ثم `e.accept()` مهما كانت النتيجة، بينما صفحة
+        OCR واحدة تُمهَل ١٢٠ ثانية ولا يقطعها الإلغاء — فتُقبل النافذة
+        الإغلاق ويُتلَف QThread وهو يعمل، وذلك انهيار لا رسالة خطأ.
+        أُصلح السببان معًا: الإلغاء صار يقتل العملية الفرعية، والانتظار
+        صار شرطًا لا مجاملة.
+        """
         if self._workers:
             if not self.ask("خروج", "ثمّة عملية جارية — إيقافها والخروج؟"):
                 e.ignore()
                 return
             self._cancel.set()
-            for w in list(self._workers):
-                w.wait(10000)
+            self.say_status("جارٍ إيقاف العمليات قبل الخروج…")
+            alive = [w for w in list(self._workers)
+                     if not w.wait(self.CLOSE_WAIT_MS)]
+            if alive:
+                self.warn(
+                    "تعذّر الإغلاق",
+                    f"{len(alive)} عملية لم تستجب للإيقاف خلال "
+                    f"{self.CLOSE_WAIT_MS // 1000} ثانية. تبقى النافذة "
+                    f"مفتوحة حتى تنتهي — إغلاقها الآن يُنهي التطبيق فجأةً "
+                    f"ويُفقد ما لم يُحفظ.")
+                e.ignore()
+                return
         self._save_settings()
         e.accept()
 

@@ -101,23 +101,54 @@ export class Engine {
   /**
    * يشغّل عملية واحدة. لا يُسمح بأكثر من واحدة في الوقت نفسه: المحرّك خيط
    * واحد، وطابور الملفات تديره الواجهة ملفًا ملفًا.
+   *
+   * الحجز يقع **قبل** قراءة الملف لا بعدها. كان الفحص يسبق
+   * `await file.arrayBuffer()` والإسنادُ يليه، وبينهما نقطةُ تسليم يمرّ
+   * منها نداءٌ ثانٍ فيجد `pending` فارغًا: فيكتب الثاني فوق حجز الأول،
+   * فتصل نتيجة الأول برقم لا يطابق فتُهمَل ويُصفَّر الحجز، وتصل نتيجة
+   * الثاني ولا منتظِر لها — وعدان معلّقان إلى الأبد بلا خطأ ولا مهلة،
+   * لأن مهلة الصمت تُلغى مع تصفير `pending`.
+   *
+   * والوعد يُنشأ قبل الحجز لا بعده: `#crash` و`shutdown` قد يقعان أثناء
+   * قراءة الملف، وهما يستدعيان `pending.reject` — فلا بدّ أن تكون جاهزة
+   * لحظةَ الحجز لا بعد `await`.
    */
   async run(kind, file, options) {
     await this.start();
     if (this.pending) throw new Error('المحرّك مشغول بعملية أخرى.');
 
     const id = (this.seq += 1);
-    const buffer = await file.arrayBuffer();
-    return new Promise((resolve, reject) => {
-      this.pending = { id, resolve, reject };
-      this.#beat();
-      this.worker.postMessage(
-        { type: kind, id, name: file.name, data: buffer, options },
-        // نقل الملكية لا نسخها: ملف من ٥٠ ميغابايت كان يُنسخ مرة عند
-        // الإرسال ومرة عند الكتابة في نظام ملفات المتصفح.
-        [buffer],
-      );
+    let resolve;
+    let reject;
+    const settled = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
     });
+    this.pending = { id, resolve, reject };
+    this.#beat();
+
+    let buffer;
+    try {
+      buffer = await file.arrayBuffer();
+    } catch (err) {
+      if (this.pending && this.pending.id === id) {
+        this.pending = null;
+        this.#beat();
+      }
+      throw err;
+    }
+
+    // مات الخيط أو أُوقف أثناء القراءة: الحجز لم يعد لنا، ووعدُنا مرفوض
+    // أصلًا من `#crash` أو `shutdown` — فلا نرسل إلى خيط لا يردّ.
+    if (!this.worker || !this.pending || this.pending.id !== id) return settled;
+
+    this.worker.postMessage(
+      { type: kind, id, name: file.name, data: buffer, options },
+      // نقل الملكية لا نسخها: ملف من ٥٠ ميغابايت كان يُنسخ مرة عند
+      // الإرسال ومرة عند الكتابة في نظام ملفات المتصفح.
+      [buffer],
+    );
+    return settled;
   }
 
   convert(file, options) {

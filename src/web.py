@@ -17,9 +17,9 @@ import json
 import os
 import traceback
 
-from .common import stats_summary, verdict_of
+from .common import PREVIEW_LIMIT, stats_summary, verdict_of
 from .core import __version__
-from .structure import ConversionCancelled, Options, convert, diagnose
+from .structure import LIMITS, ConversionCancelled, Options, convert, diagnose
 
 # مجلد العمل داخل نظام ملفات المتصفح (MEMFS). جافاسكربت يكتب ملف PDF فيه
 # ثم يمرّر مساره — أرخص من تمرير البايتات عبر حدود اللغتين مرتين.
@@ -28,29 +28,18 @@ WORK_DIR = "/pdf2md"
 PROFILES = ("auto", "saudi_law", "plain")
 FOOTNOTES = ("quote", "inline", "drop")
 
-# حدود القيم العددية. الواجهة تُقيّدها في عناصر HTML أصلًا، لكن ما يصل من
+# حدود القيم العددية تأتي من `structure.LIMITS` — مصدر الحقيقة الواحد
+# للواجهات الثلاث. الواجهة تُقيّدها في عناصر HTML أصلًا، لكن ما يصل من
 # جافاسكربت مُدخَل لا يُوثق به: عنصر HTML مُعدَّل من أدوات المطوّر أو
-# إعدادات محفوظة من إصدار أقدم تصل إلى هنا كما هي. `--h-top 400` كان
+# إعدادات محفوظة من إصدار أقدم تصل إلى هنا كما هي. `h_top: 400` كان
 # يُنتج عنوانًا بأربعمئة #، والحدّ هنا يمنعه في الويب كما يمنعه argparse
 # في سطر الأوامر.
-LIMITS = {
-    "h_top": (1, 6),
-    "h_sub": (1, 6),
-    "page_from": (0, 1_000_000),
-    "page_to": (0, 1_000_000),
-}
-PARA_GAP = (0.1, 5.0)
+PARA_GAP = LIMITS["para_gap"]
 
 BOOL_FIELDS = (
     "fix_ligatures", "check_ink", "unify_digits", "drop_headers",
     "drop_watermark", "drop_toc", "build_toc", "tables",
 )
-
-# سقف طول المعاينة المُعادة إلى الواجهة. مطابق لسقف واجهة سطح المكتب
-# (PREVIEW_LIMIT في gui.py) وللسبب نفسه: كتاب من ٩٠٠ صفحة يُنتج ملفًا
-# بملايين الحروف، ورسمه في عنصر HTML واحد يجمّد اللسان. التنزيل يأخذ
-# الناتج كاملًا — المقصوص هو المعروض وحده.
-PREVIEW_LIMIT = 200_000
 
 
 def _int(value, key):
@@ -174,6 +163,10 @@ def convert_file(path, options=None, progress=None, log=None, name=None):
         "markdown": markdown,
         "preview": markdown[:PREVIEW_LIMIT],
         "truncated": len(markdown) > PREVIEW_LIMIT,
+        # الواجهة تبني رسالة القصّ من هذا الرقم لا من ثابت مكتوب فيها:
+        # كان النص «أول ٢٠٠ ألف حرف» محفورًا في app.js، فتغييرُ السقف هنا
+        # يجعل الرسالة تكذب على المستخدم بلا أن يُخطئ شيء.
+        "preview_limit": PREVIEW_LIMIT,
         "stats": stats,
         "summary": stats_summary(stats),
     }, ensure_ascii=False)

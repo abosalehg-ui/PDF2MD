@@ -371,6 +371,8 @@ h3 {
   background: var(--cream);
 }
 
+/* الاسم زرّ يحدّد الملف للفحص التشخيصي، لا مجرّد لصيقة — فيُجرَّد من هيئة
+   الزرّ العامة (خلفية بنّية وحشو ١٨px) ويبقى فعلًا يُطال بلوحة المفاتيح. */
 .files .name {
   flex: 1;
   min-width: 0;
@@ -381,6 +383,23 @@ h3 {
      يبقى على اتجاهه ويظهر امتداده في طرفه المتوقَّع. */
   unicode-bidi: plaintext;
   text-align: right;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+/* الصفّ المحدَّد يُميَّز بالحدّ واللون معًا لا باللون وحده: تمييزٌ بلون
+   واحد لا يبلغ من لا يفرّق الألوان. */
+.files li.selected {
+  border-color: var(--gold-focus);
+  background: var(--head);
+}
+.files li.selected .name {
+  font-weight: 700;
 }
 
 .files .size {

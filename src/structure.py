@@ -33,6 +33,24 @@ class ConversionCancelled(Exception):
     """أُلغي التحويل بطلب من المستخدم — ليست حالة خطأ."""
 
 
+# ═══════════════════════ حدود القيم ═══════════════════════
+
+# المدى المقبول لكل حقل عددي في Options — (الأدنى، الأعلى) شاملين الطرفين.
+#
+# مصدر الحقيقة الوحيد للواجهات الثلاث. كان كلٌّ منها يحمل حدوده: مستوى
+# العنوان الرئيسي ١..٥ في الواجهة الرسومية و١..٦ في سطر الأوامر والويب،
+# وفجوة الفقرة ٠٫٢٠..٣٫٠٠ هناك و٠٫١..٥٫٠ هنا وبلا حدّ في سطر الأوامر —
+# فالقيمة التي يقبلها المستخدم في واجهة تُرفض في أخرى بلا سبب مفهوم.
+# مكانها هنا لا في واجهة: الحدّ خاصّة المحرّك، والواجهات تعرضه لا تملكه.
+LIMITS = {
+    "h_top": (1, 6),
+    "h_sub": (1, 6),
+    "page_from": (0, 1_000_000),
+    "page_to": (0, 1_000_000),
+    "para_gap": (0.1, 5.0),
+}
+
+
 # ═══════════════════════ الإعدادات ═══════════════════════
 
 @dataclass
@@ -365,7 +383,12 @@ def _extract_pages(doc, opt, lo, hi, st, say, tick, cancel):
                 want, why = ocr_engine.page_verdict(page, raw)
             if want:
                 lines = ocr_engine.page_lines(page, dpi=opt.ocr_dpi,
-                                       language=opt.ocr_lang)
+                                              language=opt.ocr_lang,
+                                              cancel=cancel, log=say)
+                # الإلغاء أثناء الصفحة يُرجع None أيضًا — لكنه ليس فشلًا،
+                # فلا يُحسب في ocr_missed ولا يُنذر به المستخدم.
+                if cancel is not None and cancel.is_set():
+                    raise ConversionCancelled("أُلغي التحويل.")
                 if lines is None:
                     st["ocr_missed"] += 1
                     say(f"⚠ تعذّر تشغيل OCR على ص {i + 1} — "

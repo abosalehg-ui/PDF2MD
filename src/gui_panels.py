@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (
 from . import ocr as ocr_engine
 from .common import verdict_of
 from .gui_theme import BAD, OK
-from .structure import Options
+from .structure import LIMITS, Options
 
 PROFILES = [
     ("تلقائي — كشف العناوين بحجم الخط", "auto"),
@@ -49,9 +49,12 @@ OCR_MODES = [
     ("بلا OCR — طبقة النص الأصلية دائمًا", "never"),
     ("دائمًا — كل الصفحات (بطيء)", "always"),
 ]
+# الخياران الأولان يضعان الحاشية في الموضع نفسه — نهاية القسم — ويفترقان
+# في علامة الاقتباس وحدها. وكان الثاني يُسمّى «ضمن النص» فيوهم بإدراجها في
+# موضع إشارتها من الفقرة، وهو ما لا يفعله المحرّك في أي وضع.
 FOOTNOTES = [
-    ("اقتباس منفصل  >", "quote"),
-    ("ضمن النص", "inline"),
+    ("في نهاية القسم — اقتباس  >", "quote"),
+    ("في نهاية القسم — بلا اقتباس", "inline"),
     ("حذف", "drop"),
 ]
 
@@ -105,11 +108,11 @@ class OptionsPanel(QGroupBox):
         gl.addWidget(QLabel("مستوى العناوين"), r, 0)
         hr = QHBoxLayout()
         self.sp_top = QSpinBox()
-        self.sp_top.setRange(1, 5)
+        self.sp_top.setRange(*LIMITS["h_top"])
         self.sp_top.setValue(2)
         self.sp_top.setAccessibleName("مستوى العنوان الرئيسي")
         self.sp_sub = QSpinBox()
-        self.sp_sub.setRange(1, 6)
+        self.sp_sub.setRange(*LIMITS["h_sub"])
         self.sp_sub.setValue(3)
         self.sp_sub.setAccessibleName("مستوى العنوان الفرعي")
         lab_top, lab_sub = QLabel("رئيسي"), QLabel("فرعي")
@@ -126,10 +129,10 @@ class OptionsPanel(QGroupBox):
         gl.addWidget(QLabel("نطاق الصفحات"), r, 0)
         hr2 = QHBoxLayout()
         self.sp_from = QSpinBox()
-        self.sp_from.setRange(0, 99999)
+        self.sp_from.setRange(*LIMITS["page_from"])
         self.sp_from.setAccessibleName("أول صفحة")
         self.sp_to = QSpinBox()
-        self.sp_to.setRange(0, 99999)
+        self.sp_to.setRange(*LIMITS["page_to"])
         self.sp_to.setAccessibleName("آخر صفحة")
         lab_from, lab_to = QLabel("من"), QLabel("إلى")
         lab_from.setBuddy(self.sp_from)
@@ -147,7 +150,7 @@ class OptionsPanel(QGroupBox):
         gl.addWidget(QLabel("فجوة الفقرة"), r, 0)
         hr3 = QHBoxLayout()
         self.sp_gap = QDoubleSpinBox()
-        self.sp_gap.setRange(0.20, 3.00)
+        self.sp_gap.setRange(*LIMITS["para_gap"])
         self.sp_gap.setSingleStep(0.05)
         self.sp_gap.setDecimals(2)
         self.sp_gap.setValue(0.75)

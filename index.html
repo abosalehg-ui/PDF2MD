@@ -11,7 +11,7 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; base-uri 'self'; form-action 'none';"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; base-uri 'self'; form-action 'none';"
     />
     <title>PDF2MD — محوّل PDF العربي إلى Markdown</title>
     <meta
@@ -22,6 +22,9 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%236B4423'/%3E%3Cpath d='M28 22h30l16 16v40a4 4 0 0 1-4 4H28a4 4 0 0 1-4-4V26a4 4 0 0 1 4-4z' fill='%23FAF6EE'/%3E%3Cpath d='M58 22l16 16H58z' fill='%23C9A227'/%3E%3Cpath d='M34 56h32M34 68h22' stroke='%236B4423' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E"
     />
+    <!-- الخطوط قبل اللوحة: تعريفات @font-face وحدها، مستضافة ذاتيًّا لأن
+         سياسة أمن المحتوى تمنع شبكات الخطوط الخارجية عمدًا. -->
+    <link rel="stylesheet" href="web/css/fonts.css" />
     <link rel="stylesheet" href="web/css/styles.css" />
   </head>
 
@@ -89,7 +92,17 @@
         <span class="spinner" aria-hidden="true"></span>
         <span id="bootMsg">تحضير محرّك التحويل… (يُنزَّل مرّة واحدة ثم يُخزَّن في المتصفّح)</span>
       </div>
-      <div class="bar"><div class="bar-fill" id="bootBar"></div></div>
+      <div
+        class="bar"
+        id="bootBarTrack"
+        role="progressbar"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
+        aria-label="تقدّم إقلاع المحرّك"
+      >
+        <div class="bar-fill" id="bootBar"></div>
+      </div>
     </section>
 
     <main id="main" class="layout" hidden>
@@ -133,8 +146,8 @@
           <div class="field">
             <label for="optFootnotes">الحواشي</label>
             <select id="optFootnotes">
-              <option value="quote">اقتباس منفصل &gt;</option>
-              <option value="inline">ضمن النص</option>
+              <option value="quote">في نهاية القسم — اقتباس &gt;</option>
+              <option value="inline">في نهاية القسم — بلا اقتباس</option>
               <option value="drop">حذف</option>
             </select>
           </div>
@@ -193,7 +206,17 @@
             <button class="gold" id="btnDiag" type="button" disabled>فحص تشخيصي</button>
             <button class="ghost" id="btnStop" type="button" disabled>إيقاف</button>
           </div>
-          <div class="bar"><div class="bar-fill" id="jobBar"></div></div>
+          <div
+            class="bar"
+            id="jobBarTrack"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            aria-label="تقدّم التحويل"
+          >
+            <div class="bar-fill" id="jobBar"></div>
+          </div>
           <p class="status" id="status" role="status">
             جاهز — اسحب ملفات PDF إلى القائمة أو اضغط على منطقة الإضافة
           </p>

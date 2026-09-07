@@ -58,7 +58,23 @@ const state = {
   stopping: false,
   logLines: [],
   nextId: 1,
+  // الملف المحدَّد للفحص التشخيصي. كان الفحص يأخذ `files[0]` دائمًا، فمن
+  // أضاف خمسة ملفات وأراد فحص الثالث عليه حذف الأوّلين — بينما تطبيق سطح
+  // المكتب يفحص المحدَّد في قائمته.
+  selectedId: null,
 };
+
+/** الملف المحدَّد، أو أوّل القائمة إن لم يُحدَّد شيء أو حُذف المحدَّد. */
+function selectedFile() {
+  return state.files.find((f) => f.id === state.selectedId) || state.files[0] || null;
+}
+
+/*
+ * بصمة الملف لمنع تكراره في القائمة. الاسم وحده لا يكفي — لمجلّدين ملفان
+ * بالاسم نفسه ومحتوى مختلف — والثلاثة معًا أقصى ما يتيحه المتصفّح بلا
+ * قراءة الملف كاملًا. وسطح المكتب يمنع التكرار بالمسار.
+ */
+const fileKey = (f) => JSON.stringify([f.name, f.size, f.lastModified]);
 
 // ═══════════════ أدوات صغيرة ═══════════════
 
@@ -83,7 +99,11 @@ function status(text) {
 }
 
 function progress(pct) {
-  $('jobBar').style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  const value = Math.max(0, Math.min(100, Math.round(pct)));
+  $('jobBar').style.width = `${value}%`;
+  // القيمة تُعلَن لا تُرسَم وحدها: الشريط عنصر زخرفي بلا هذا، فقارئ الشاشة
+  // لا يسمع من التقدّم شيئًا سوى نصّ الحالة.
+  $('jobBarTrack').setAttribute('aria-valuenow', String(value));
 }
 
 function download(blob, name) {
@@ -184,14 +204,25 @@ function initOptions() {
 
 function renderFiles() {
   const list = $('fileList');
+  const current = selectedFile();
   list.textContent = '';
   for (const item of state.files) {
     const li = document.createElement('li');
+    const chosen = current !== null && current.id === item.id;
+    if (chosen) li.classList.add('selected');
 
-    const name = document.createElement('span');
+    // زرّ لا span: التحديد فعلٌ يجب أن يُطال بلوحة المفاتيح كما يُطال
+    // بالفأرة، و`aria-pressed` يُسمع الحالة لقارئ الشاشة.
+    const name = document.createElement('button');
+    name.type = 'button';
     name.className = 'name';
     name.textContent = item.file.name;
     name.title = item.file.name;
+    name.setAttribute('aria-pressed', String(chosen));
+    name.addEventListener('click', () => {
+      state.selectedId = item.id;
+      renderFiles();
+    });
 
     const size = document.createElement('span');
     size.className = 'size';
@@ -223,11 +254,27 @@ function addFiles(fileList) {
     (f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name),
   );
   const rejected = fileList.length - pdfs.length;
+
+  // الملف المكرّر يُتجاهَل: تحويله مرّتين يُنتج ناتجين بالاسم نفسه لا
+  // يميّزهما شيء في قائمة المعاينة، ويسلّمهما «تنزيل الكل» باسمين مفضوضين
+  // بلاحقة رقمية لا تدلّ على أيّهما أيّ.
+  const have = new Set(state.files.map((f) => fileKey(f.file)));
+  const fresh = [];
   for (const file of pdfs) {
+    const key = fileKey(file);
+    if (have.has(key)) continue;
+    have.add(key);
+    fresh.push(file);
     state.files.push({ id: state.nextId++, file, status: { kind: '', text: '' } });
   }
-  if (pdfs.length) say(`أُضيف ${pdfs.length} ملف إلى القائمة.`);
-  const huge = pdfs.filter((f) => f.size > BIG_FILE);
+  const duplicate = pdfs.length - fresh.length;
+
+  if (fresh.length) say(`أُضيف ${fresh.length} ملف إلى القائمة.`);
+  if (duplicate) {
+    status(`تُجوهل ${duplicate} ملف مكرّر — موجود في القائمة أصلًا.`);
+    say(`تُجوهل ${duplicate} ملف مكرّر (الاسم والحجم وتاريخ التعديل نفسها).`);
+  }
+  const huge = fresh.filter((f) => f.size > BIG_FILE);
   if (huge.length) {
     const names = huge.map((f) => `${f.name} (${human(f.size)})`).join('، ');
     status(`تنبيه: ${huge.length} ملف أكبر من ${human(BIG_FILE)} — قد تنفد ذاكرة اللسان.`);
@@ -360,7 +407,8 @@ function showResult() {
   $('preview').textContent = item.preview;
   $('previewNote').hidden = !item.truncated;
   $('previewNote').textContent = item.truncated
-    ? 'المعروض أول ٢٠٠ ألف حرف فقط — التنزيل والنسخ يأخذان الناتج كاملًا.'
+    ? `المعروض أول ${NUM.format(item.limit)} حرف فقط — التنزيل والنسخ `
+      + 'يأخذان الناتج كاملًا.'
     : '';
 }
 
@@ -438,7 +486,9 @@ function renderDiagnosis(d) {
 
 const engine = new Engine((event) => {
   if (event.type === 'boot') {
-    $('bootBar').style.width = `${event.pct}%`;
+    const pct = Math.max(0, Math.min(100, Math.round(event.pct)));
+    $('bootBar').style.width = `${pct}%`;
+    $('bootBarTrack').setAttribute('aria-valuenow', String(pct));
     $('bootMsg').textContent = event.msg;
   } else if (event.type === 'progress') {
     progress(event.pct);
@@ -473,7 +523,8 @@ function syncButtons() {
   $('btnDiag').disabled = state.running || !has || !ready;
   $('btnClear').disabled = state.running || !has;
   $('btnStop').disabled = !state.running;
-  $('btnDiag').textContent = has ? `فحص: ${state.files[0].file.name}` : 'فحص تشخيصي';
+  const target = selectedFile();
+  $('btnDiag').textContent = target ? `فحص: ${target.file.name}` : 'فحص تشخيصي';
 }
 
 function mark(item, kind, text) {
@@ -518,6 +569,7 @@ async function runBatch() {
         markdown: result.markdown,
         preview: result.preview,
         truncated: result.truncated,
+        limit: result.preview_limit,
         text: result.markdown, // ما يكتبه zip.js
       });
       say(`✓ ${result.name} (${NUM.format(result.stats.chars)} حرف — ${result.summary})`);
@@ -544,7 +596,8 @@ async function runBatch() {
 
 async function runDiagnose() {
   if (state.running || !state.files.length) return;
-  const item = state.files[0];
+  const item = selectedFile();
+  if (!item) return;
   state.running = true;
   state.stopping = false;
   syncButtons();
