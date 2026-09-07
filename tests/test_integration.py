@@ -261,3 +261,113 @@ def test_shared_rawdict_gives_the_same_lines_as_reparsing(tmp_path):
         assert passed and any(ln["text"] for ln in passed)
     finally:
         doc.close()
+
+
+# ═══════════ سقف بكسلات الرسم — المسارَان معًا ═══════════
+
+def _fake_pixmap(page, seen):
+    """يستبدل get_pixmap بمُسجِّل لمعامل التكبير — بلا تخصيص ذاكرة فعلي."""
+    class _Pix:
+        def tobytes(self, _fmt):
+            return b"png"
+
+    def grab(matrix=None, **_kw):
+        seen["z"] = matrix.a
+        return _Pix()
+
+    page.get_pixmap = grab
+
+
+def test_ocr_path_honours_a_pixel_ceiling(monkeypatch):
+    """
+    الانحدار: `ocr.page_lines` كان يرسم الصفحة بالمعامل الاسمي بلا سقف،
+    بينما `core.ink_map` يُنزّله. صفحة ١٤٤٠٠ نقطة — وهي مشروعة في مواصفة
+    PDF — تطلب عندها ٣٫٦ مليار بكسل (نحو ١١ غيغابايت بثلاث قنوات) من ملف
+    حجمه أقل من كيلوبايت، فتموت العملية بنفاد الذاكرة.
+    """
+    doc = fitz.open()
+    page = doc.new_page(width=14400, height=14400)
+    seen = {}
+    _fake_pixmap(page, seen)
+    monkeypatch.setattr(ocr, "tessdata_dir", lambda: "/tmp")
+    monkeypatch.setattr(ocr, "_tsv", lambda *a, **k: [])
+
+    ocr.page_lines(page)
+    pixels = (page.rect.width * seen["z"]) * (page.rect.height * seen["z"])
+    assert seen["z"] < ocr.OCR_DPI / 72.0          # نُزِّل فعلًا
+    assert pixels <= ocr.OCR_MAX_PIXELS * 1.001    # وتحت السقف
+    doc.close()
+
+
+def test_a_normal_page_keeps_the_requested_ocr_dpi(monkeypatch):
+    """التنزيل يخصّ الصفحة العملاقة وحدها — A4 تُرسم بالدقة المطلوبة كاملة."""
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    seen = {}
+    _fake_pixmap(page, seen)
+    monkeypatch.setattr(ocr, "tessdata_dir", lambda: "/tmp")
+    monkeypatch.setattr(ocr, "_tsv", lambda *a, **k: [])
+
+    ocr.page_lines(page)
+    assert seen["z"] == pytest.approx(ocr.OCR_DPI / 72.0)
+    doc.close()
+
+
+def test_giant_page_warns_before_it_degrades(monkeypatch):
+    """التنزيل لا يقع بصمت: الناتج أقلّ دقة، فالمستخدم يستحق أن يعرف."""
+    doc = fitz.open()
+    page = doc.new_page(width=14400, height=14400)
+    _fake_pixmap(page, {})
+    monkeypatch.setattr(ocr, "tessdata_dir", lambda: "/tmp")
+    monkeypatch.setattr(ocr, "_tsv", lambda *a, **k: [])
+
+    said = []
+    ocr.page_lines(page, log=said.append)
+    assert any("صفحة عملاقة" in m for m in said)
+    doc.close()
+
+
+# ═══════════ الإلغاء يصل إلى العملية الفرعية ═══════════
+
+def test_cancel_stops_ocr_before_it_starts(monkeypatch):
+    """
+    الإلغاء المضبوط قبل التمييز يُرجع None بلا تشغيل Tesseract أصلًا —
+    فزرّ «إيقاف» لا ينتظر صفحة قد تُمهَل دقيقتين.
+    """
+    import threading
+
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    _fake_pixmap(page, {})
+    monkeypatch.setattr(ocr, "tessdata_dir", lambda: "/tmp")
+
+    ran = []
+    monkeypatch.setattr(ocr, "_tsv", lambda *a, **k: ran.append(1) or [])
+    stop = threading.Event()
+    stop.set()
+
+    assert ocr.page_lines(page, cancel=stop) is None
+    assert ran == []
+    doc.close()
+
+
+def test_tsv_receives_the_cancel_object(monkeypatch):
+    """الإلغاء يُمرَّر إلى `_tsv` لا يُفحص عند حدود الصفحة وحدها."""
+    import threading
+
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    _fake_pixmap(page, {})
+    monkeypatch.setattr(ocr, "tessdata_dir", lambda: "/tmp")
+
+    got = {}
+
+    def spy(png, language, timeout, cancel=None):
+        got["cancel"] = cancel
+        return []
+
+    monkeypatch.setattr(ocr, "_tsv", spy)
+    stop = threading.Event()
+    ocr.page_lines(page, cancel=stop)
+    assert got["cancel"] is stop
+    doc.close()

@@ -5,7 +5,7 @@
  * دائمًا لا مخرج منه إلا تحديثها. الخيط العامل يُستبدَل هنا بكائن وهمي
  * يحاكي رسائله، فتُختبر آلة الحالات كلها بلا متصفّح ولا Pyodide.
  *
- *   node --test tests/js/
+ *   node --test tests/js/engine.test.mjs tests/js/zip.test.mjs
  */
 
 import test from 'node:test';
@@ -147,4 +147,24 @@ test('لا مهمتان في وقت واحد — المحرّك خيط واحد'
   engine.convert(fakeFile(), {}).catch(() => {});
   await new Promise((r) => setTimeout(r, 5));
   await assert.rejects(engine.convert(fakeFile(), {}), /مشغول/);
+});
+
+test('الانحدار: نداءان متزامنان — الثاني يُرفض ولا يعلَّق الوعدان', async (t) => {
+  // الحارس كان يفحص `pending` **قبل** `await file.arrayBuffer()`، فنداءان
+  // بلا انتظار بينهما يمرّان من الفحص معًا: الثاني يكتب فوق حجز الأول،
+  // فتصل نتيجة الأول برقم لا يطابق فتُهمَل، ولا منتظِر لنتيجة الثاني.
+  // النتيجة وعدان معلّقان إلى الأبد — بلا خطأ ولا مهلة، لأن مهلة الصمت
+  // تُلغى مع تصفير `pending`. الاختبار السابق ينتظر ٥ مللي بين النداءين
+  // فيمرّ على الحالة السهلة وحدها.
+  installWorker(['ready']);
+  const engine = makeEngine(t, 60);
+  await engine.start();
+
+  const first = engine.convert(fakeFile('أ.pdf'), {});
+  const second = engine.convert(fakeFile('ب.pdf'), {});
+
+  await assert.rejects(second, /مشغول/);
+  // والأول يبقى مهمة صالحة: خيط الاختبار لا يردّ، فتقطعه مهلة الصمت —
+  // المهم أنه **يُحسم**، لا أن يبقى معلّقًا بلا نهاية.
+  assert.match(await settles(first, 400), /^rejected: /);
 });

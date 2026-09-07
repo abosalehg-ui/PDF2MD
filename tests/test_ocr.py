@@ -193,3 +193,66 @@ def test_two_yehs_in_one_line_are_both_counted():
     stats = {}
     assert _text(core.mend_broken_yeh([span], stats)) == "تيفدية"
     assert stats["yeh"] == 2
+
+
+# ═══════════════ قراءة مخرَج Tesseract الخام (TSV) ═══════════════
+#
+# `_words` تقرأ نصًّا يأتي من عملية خارجية، وكانت بلا اختبار مباشر: يمرّ
+# عليها اختبار الشكل وحده عبر كائنات مبنيّة يدويًا. وهي أكثر ما في الملف
+# عرضةً لتغيّر خارجي — عمودٌ يُضاف أو صفٌّ يُنسَّق غير ما نتوقّع.
+
+HEAD = ("level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\t"
+        "left\ttop\twidth\theight\tconf\ttext")
+
+
+def _row(block, par, line, left, top, w, h, conf, text):
+    return (f"5\t1\t{block}\t{par}\t{line}\t1\t"
+            f"{left}\t{top}\t{w}\t{h}\t{conf}\t{text}")
+
+
+def test_words_keeps_only_real_words():
+    """
+    الصفوف الوسيطة (الكتلة والفقرة والسطر) نصّها فارغ، والكلمة دون عتبة
+    الثقة ضوضاء مسح لا حرفًا — كلاهما يُسقَط.
+    """
+    tsv = [
+        HEAD,
+        _row(1, 1, 1, 10, 10, 0, 0, -1, ""),          # صف كتلة وسيط
+        _row(1, 1, 1, 10, 10, 40, 12, 91, "مذكرة"),
+        _row(1, 1, 1, 60, 10, 40, 12, 5, "ضوضاء"),    # ثقة تحت العتبة
+        _row(1, 1, 1, 110, 10, 40, 12, 88, "تفيد"),
+    ]
+    words = ocr._words(tsv)
+    assert list(words) == [(1, 1, 1)]
+    assert [w[4] for w in words[(1, 1, 1)]] == ["مذكرة", "تفيد"]
+
+
+def test_words_splits_rows_by_line_key():
+    """كل (كتلة، فقرة، سطر) مفتاح مستقل — وإلا اختلطت الأسطر عند البناء."""
+    tsv = [HEAD,
+           _row(1, 1, 1, 10, 10, 40, 12, 90, "الأول"),
+           _row(1, 1, 2, 10, 30, 40, 12, 90, "الثاني")]
+    assert sorted(ocr._words(tsv)) == [(1, 1, 1), (1, 1, 2)]
+
+
+@pytest.mark.parametrize("tsv", [
+    [],                                             # مخرَج فارغ
+    ["conf\ttext"],                                 # ترويسة بلا الأعمدة اللازمة
+    [HEAD],                                         # ترويسة بلا صفوف
+    [HEAD, "5\t1\t1"],                              # صف مبتور دون عمود النص
+    [HEAD, _row(1, 1, 1, 10, 10, 40, 12, "س", "نص")],   # ثقة غير عددية
+    [HEAD, _row(1, 1, 1, "س", 10, 40, 12, 90, "نص")],   # إحداثي غير عددي
+])
+def test_words_survives_a_malformed_stream(tsv):
+    """
+    مخرَج غير متوقَّع لا يرمي استثناءً: الفشل هنا يعني سقوط تحويل المستند
+    كله بسبب صفٍّ واحد شاذّ من عملية خارجية.
+    """
+    assert ocr._words(tsv) == {}
+
+
+def test_tsv_returns_none_when_tesseract_is_absent(monkeypatch):
+    """الثنائي غير موجود -> None لا استثناء، فيرجع المستدعي للطبقة الأصلية."""
+    monkeypatch.setattr(ocr.subprocess, "Popen",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("no tesseract")))
+    assert ocr._tsv(b"png", "ara", 1) is None

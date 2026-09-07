@@ -22,8 +22,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
       # وظيفة المحرّك: بلا PyQt6 عمدًا — تثبت أن سطر الأوامر يعمل بدونه.
       # اختبارات الواجهة تُتخطّى هنا وتشتغل في وظيفة gui المستقلة أدناه.
-      - run: pip install "PyMuPDF>=1.26,<2" "numpy>=1.24,<3" pytest
-      - run: pytest -q
+      - run: pip install "PyMuPDF>=1.26,<2" "numpy>=1.24,<3" pytest coverage
+      # بوابة تغطية لا تقرير: الانحدار الصامت — دالّة تُضاف بلا اختبار، أو
+      # اختبار يُحذف مع كوده — كان يمرّ من CI أخضر. الواجهة الرسومية مستثناة
+      # لأنها لا تُستورَد أصلًا في هذه الوظيفة (بلا PyQt6)، فتُقاس صفرًا
+      # وتسحب الإجمالي معها؛ وظيفة gui أدناه هي التي تحرسها.
+      - run: coverage run --source=src --omit="src/gui*.py" -m pytest -q
+      - run: coverage report --omit="src/gui*.py" --fail-under=80
 
   # الواجهة تُختبر بقناة offscreen في Qt: نافذة كاملة بلا خادم عرض. بلا هذه
   # الوظيفة كانت اختبارات gui تُتخطّى في CI فلا تحرس شيئًا — وgui.py أكبر

@@ -1,5 +1,5 @@
 {
-  "_comment": "مصدر الحقيقة الوحيد لإصدارات زمن التشغيل في المتصفح. يقرؤه tools/fetch-web-runtime.sh عند التنزيل، و web/js/worker.js عند الإقلاع. تغيير الإصدار هنا وحده يكفي — بشرط تحديث sha256 معه.",
+  "_comment": "مصدر الحقيقة الوحيد لإصدارات زمن التشغيل في المتصفح. يقرؤه tools/fetch_web_runtime.py عند التنزيل، و web/js/worker.js عند الإقلاع. تغيير الإصدار هنا وحده يكفي — بشرط تحديث sha256 معه.",
   "pyodide": "0.28.3",
   "core": {
     "url": "https://github.com/pyodide/pyodide/releases/download/0.28.3/pyodide-core-0.28.3.tar.bz2",

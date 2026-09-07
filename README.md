@@ -353,6 +353,7 @@ Error: Found main.py but it does not export a top-level "app", "application", or
 - **الحفظ**: الناتج يُنزَّل إلى مجلد التنزيلات، فلا يُكتب بجانب ملف PDF كما في `-o`.
 - **متصفّح حديث** لازم: WebAssembly و`Web Worker` والوحدات النمطية (ES modules).
 - **بلا OCR**: تشغيل Tesseract يحتاج ثنائيًا لا وجود له داخل Pyodide، فالصفحة الممسوحة ضوئيًا أو ذات خريطة الخط المكسورة تخرج ناقصة هنا. حوّلها من سطر الأوامر أو الواجهة الرسومية. والجسر يعطّل الـOCR صراحةً (`ocr = never`) بدل حساب حكمٍ لا يُنفَّذ.
+- **ترويسات الحماية تختلف باختلاف المستضيف**: سياسة أمن المحتوى في وسم `<meta>` داخل الصفحة تعمل أينما نُشرت — وهي التي تحمل وعد الخصوصية (`connect-src 'self'`). لكن ترويسات لا يقبلها الوسم أصلًا — `frame-ancestors` و`X-Content-Type-Options` و`Referrer-Policy` و COOP/COEP/CORP — لا تُرسَل إلا من الخادم، وهي مضبوطة في `vercel.json`. و**GitHub Pages لا يسمح بترويسات مخصّصة إطلاقًا**، فالصفحة المنشورة عليه قابلة لأن تُؤطَّر داخل موقع آخر. لا جلسة تُسرق ولا فعل يُنتحَل — الأداة بلا حساب ولا خادم — لكن من أراد الترويسات كاملةً فلينشر على Vercel أو خلف خادم يملك ترويساته.
 
 ---
 
@@ -425,11 +426,16 @@ PDF2MD/
 │   ├── ocr.py        رصد طبقة النص المعطوبة والسقوط إلى Tesseract
 │   ├── structure.py  طبقة البنية — العناوين، الفقرات، الجداول، الحواشي، الأنماط
 │   ├── common.py     المشترك بين الواجهات — الحكم التشخيصي ومسار المخرَج
-│   ├── gui.py        واجهة PyQt6
+│   ├── gui.py        واجهة PyQt6 — النافذة والطابور
+│   ├── gui_panels.py لوحة الخيارات وعرض التشخيص
+│   ├── gui_theme.py  اللوحة اللونية وورقة الأنماط
+│   ├── gui_workers.py خيوط التحويل والفحص
 │   ├── cli.py        منطق سطر الأوامر
 │   └── web.py        جسر واجهة الويب — يعمل داخل المتصفّح، ويُختبر على CPython
 ├── web/
 │   ├── css/styles.css
+│   ├── css/fonts.css تعريفات @font-face للخطوط المستضافة ذاتيًّا
+│   ├── fonts/        Amiri و Cairo بصيغة woff2 — رخصة OFL
 │   ├── js/app.js     الواجهة
 │   ├── js/engine.js  غلاف الخيط العامل
 │   ├── js/worker.js  إقلاع Pyodide وتشغيل المحرّك
@@ -440,7 +446,8 @@ PDF2MD/
 │   ├── fetch_web_runtime.py  ينزّل Pyodide و numpy و PyMuPDF بصيغة wasm
 │   ├── build_site.py         يجمّع _site/ للنشر
 │   └── serve.py              خادم تطوير محلي
-└── tests/            اختبارات pytest — تعمل تلقائيًا في GitHub Actions
+├── docs/reviews/     تقارير مراجعة المستودع، الأحدث أولًا
+└── tests/            اختبارات pytest و node:test — تعمل في GitHub Actions
 ```
 
 <div dir="rtl">
@@ -599,6 +606,8 @@ Note that the `vercel.json` schema sets `additionalProperties: false` — one un
 Both platforms build with the same script, so their output is one thing, not two that drift.
 
 **Limits of the web build:** WebAssembly runs roughly 2–3× slower than native Python, a browser tab has less memory than a native process, output lands in the Downloads folder rather than next to the PDF, and a modern browser (WebAssembly, Web Workers, ES modules) is required.
+
+**Security headers differ by host.** The Content-Security-Policy in the page's own `<meta>` tag applies wherever the page is served, and it is the one that carries the privacy promise (`connect-src 'self'`). Headers a meta tag cannot express — `frame-ancestors`, `X-Content-Type-Options`, `Referrer-Policy`, COOP/COEP/CORP — must come from the server, and they are set in `vercel.json`. **GitHub Pages does not support custom headers at all**, so the copy published there can be framed by another site. Nothing is stolen by that (the tool has no account and no server), but if you want the full header set, deploy to Vercel or behind a server whose headers you control.
 
 ## Calibration constants
 

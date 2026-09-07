@@ -13,6 +13,7 @@
 
 import json
 import os
+import re
 import sys
 
 import pytest
@@ -22,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 fitz = pytest.importorskip("pymupdf")
 
 from src import web  # noqa: E402
-from src.structure import Options  # noqa: E402
+from src.structure import LIMITS, Options  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -337,3 +338,74 @@ def test_page_option_ids_cover_every_engine_option():
         if field.startswith("ocr"):
             continue
         assert f"  {field}: {{ el: " in app, f"الخيار {field} غير معروض"
+
+
+# ═══════════════ حدود القيم: مصدر واحد للواجهات الثلاث ═══════════════
+
+def _page_html():
+    with open(os.path.join(ROOT, "index.html"), encoding="utf-8") as f:
+        return f.read()
+
+
+def _input_attrs(html, element_id):
+    """سمات عنصر <input> واحد من الصفحة، بمفاتيحها كما هي."""
+    start = html.index(f'id="{element_id}"')
+    chunk = html[html.rindex("<input", 0, start):html.index(">", start) + 1]
+    return dict(re.findall(r'(\w+)="([^"]*)"', chunk))
+
+
+@pytest.mark.parametrize("element_id, key", [
+    ("optHTop", "h_top"),
+    ("optHSub", "h_sub"),
+    ("optGap", "para_gap"),
+])
+def test_page_inputs_match_the_shared_limits(element_id, key):
+    """
+    الانحدار: كل واجهة كانت تحمل حدودها. مستوى العنوان الرئيسي كان ١..٥
+    في الواجهة الرسومية و١..٦ هنا وفي سطر الأوامر، وفجوة الفقرة
+    ٠٫٢٠..٣٫٠٠ هناك و٠٫١..٥٫٠ هنا وبلا حدّ في سطر الأوامر — فالقيمة
+    المقبولة في واجهة تُرفض في أخرى بلا سبب مفهوم للمستخدم.
+    """
+    lo, hi = LIMITS[key]
+    attrs = _input_attrs(_page_html(), element_id)
+    assert float(attrs["min"]) == pytest.approx(lo)
+    assert float(attrs["max"]) == pytest.approx(hi)
+
+
+def test_web_reads_para_gap_bounds_from_the_engine():
+    """`web.PARA_GAP` مشتقّ لا منسوخ."""
+    assert web.PARA_GAP == LIMITS["para_gap"]
+
+
+# ═══════════════ سقف المعاينة يُعلَن للواجهة ═══════════════
+
+def test_convert_file_reports_the_preview_limit(pdf):
+    """
+    الانحدار: نصّ «أول ٢٠٠ ألف حرف» كان محفورًا في app.js، فتغيير السقف
+    هنا يجعل الرسالة تكذب على المستخدم بلا أن يُخطئ شيء.
+    """
+    data = json.loads(web.convert_file(pdf))
+    assert data["preview_limit"] == web.PREVIEW_LIMIT
+
+
+def test_page_message_builds_the_limit_from_the_engine():
+    """الواجهة تبني الرقم من الحقل المُعاد لا من ثابت مكتوب فيها."""
+    with open(os.path.join(ROOT, "web", "js", "app.js"), encoding="utf-8") as f:
+        app = f.read()
+    assert "result.preview_limit" in app
+    assert "٢٠٠ ألف" not in app
+
+
+# ═══════════════ سياسة أمن المحتوى ═══════════════
+
+def test_worker_source_is_not_widened_to_blob():
+    """
+    `worker-src 'self' blob:` كان يسمح بخيط من عنوان blob بلا حاجة: الخيط
+    يُحمَّل من web/js/worker.js نفسه. جُرّب الإقلاع كاملًا في Chromium بعد
+    التضييق — Pyodide و numpy و PyMuPDF تُحمَّل والواجهة تظهر بلا مخالفة.
+    """
+    policy = re.search(r'http-equiv="Content-Security-Policy"\s+content="([^"]+)"',
+                       _page_html())
+    assert policy, "وسم سياسة أمن المحتوى غير موجود"
+    assert "worker-src 'self';" in policy.group(1)
+    assert "blob:" not in policy.group(1)

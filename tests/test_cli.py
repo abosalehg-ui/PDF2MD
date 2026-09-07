@@ -180,3 +180,70 @@ def test_md_out_is_a_file(tmp_path):
     target = tmp_path / "ناتج.md"
     assert cli.main([pdf, "-o", str(target), "-q"]) == 0
     assert target.is_file()
+
+
+# ═══════════ ‎-o ملفًا مع دفعة: تناقض يُرفض لا يُبتلع ═══════════
+
+def test_md_out_with_many_inputs_is_refused(tmp_path):
+    """
+    الانحدار: `-o ناتج.md` مع عدة ملفات كان يمضي بصمت فيُنشئ **مجلدًا**
+    اسمه «ناتج.md» يضع فيه ملفًا لكل PDF — مخرَج لا أحد يقصده، ويخالف
+    القاعدة الموثَّقة في README: المنتهي بـ.md ملفٌ لا مجلد. ولا يُكتشف
+    إلا بعد أن تنتهي الدفعة كلها.
+    """
+    a = make_pdf(tmp_path / "a.pdf")
+    b = make_pdf(tmp_path / "b.pdf")
+    target = tmp_path / "ناتج.md"
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main([a, b, "-o", str(target), "-q"])
+
+    assert "مجلدًا" in str(exit_info.value)
+    assert not target.exists()          # ولا حتى مجلدًا بهذا الاسم
+
+
+def test_md_out_with_one_input_still_works(tmp_path):
+    """الرفض يخصّ الدفعة وحدها — الملف الواحد يبقى على قاعدته."""
+    pdf = make_pdf(tmp_path / "src.pdf")
+    target = tmp_path / "ناتج.md"
+    assert cli.main([pdf, "-o", str(target), "-q"]) == 0
+    assert target.is_file()
+
+
+def test_folder_out_with_many_inputs_still_works(tmp_path):
+    """والمجلد مع الدفعة هو الاستعمال الصحيح، فلا يُمَسّ."""
+    a = make_pdf(tmp_path / "a.pdf")
+    b = make_pdf(tmp_path / "b.pdf")
+    out = tmp_path / "مخرجات"
+    assert cli.main([a, b, "-o", str(out), "-q"]) == 0
+    assert (out / "a.md").is_file() and (out / "b.md").is_file()
+
+
+# ═══════════ حدود القيم: مصدر واحد للواجهات الثلاث ═══════════
+
+@pytest.mark.parametrize("args, needle", [
+    (["--ocr-dpi", "10"], "أقل من 200"),
+    (["--ocr-dpi", "100000"], "أعلى من 600"),
+    (["--para-gap", "99"], "فجوة الفقرة خارج المدى"),
+    (["--para-gap", "0"], "فجوة الفقرة خارج المدى"),
+])
+def test_out_of_range_values_are_refused(args, needle):
+    """
+    الانحدار: `--ocr-dpi` كان مسقوفًا من الأسفل وحده، و`--para-gap` بلا
+    حدّ إطلاقًا — بينما الواجهتان الأخريان تقيّدانهما.
+    """
+    parsed = cli.build_parser().parse_args(["x.pdf", *args])
+    with pytest.raises(SystemExit) as exit_info:
+        cli.options_from(parsed)
+    assert needle in str(exit_info.value)
+
+
+def test_cli_heading_levels_follow_the_shared_limits():
+    """مستويات العناوين من `structure.LIMITS` لا مكتوبة في سطر الأوامر."""
+    from src.structure import LIMITS
+
+    parser = cli.build_parser()
+    for flag, key in (("--h-top", "h_top"), ("--h-sub", "h_sub")):
+        action = next(a for a in parser._actions if flag in a.option_strings)
+        lo, hi = LIMITS[key]
+        assert list(action.choices) == list(range(lo, hi + 1))

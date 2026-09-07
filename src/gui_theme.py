@@ -15,8 +15,6 @@ from PyQt6.QtCore import Qt
 APP_NAME = "PDF2MD"
 ORG_NAME = "PDF2MD"
 
-# حدّ عرض المعاينة — يحمي QPlainTextEdit من التجمّد على الكتب الكبيرة
-PREVIEW_LIMIT = 200_000
 TAGLINE = "استخراج نص عربي سليم من PDF المعطوب الرباطات، وتحويله إلى Markdown منظَّم"
 
 # المسار الكامل يُخزَّن في بيانات عنصر القائمة، ويُعرض اسم الملف وحده
