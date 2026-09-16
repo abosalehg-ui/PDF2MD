@@ -96,6 +96,9 @@ RE_DEF = re.compile(r"^([^:：]{2,45}?)\s*:\s*(.+)$")
 RE_TOCLINE = re.compile(r".+\s[\d٠-٩]{1,4}$")
 
 END_PUNCT = tuple(".:؛!؟")
+
+# حروف عربية أو لاتينية — لعدّ مضمون العنوان وتمييزه من الرموز والأرقام
+AR_OR_LATIN = re.compile(r"[ء-يA-Za-z]")
 HEADER_ZONE = 0.085     # أعلى الصفحة — منطقة الترويسة
 FOOTER_ZONE = 0.88      # أسفل الصفحة — منطقة التذييل ورقم الصفحة
 NOTE_ZONE = 0.45        # الحواشي لا تُلتقط إلا في النصف السفلي
@@ -139,6 +142,11 @@ class Builder:
         if new:
             self.flush()
         self.buf.append(text)
+
+    def blank_page(self, number, why):
+        """يضع علامة مرئية مكان صفحة لم يخرج منها نص."""
+        self.flush()
+        self.out += [f"> ⚠ ص {number}: {why} — لم تُقرأ، فلا نص لها هنا.", ""]
 
     def head(self, level, text):
         self.flush()
@@ -188,6 +196,17 @@ class Builder:
 
 # ═══════════════════════ التصنيف ═══════════════════════
 
+# البسملة افتتاحٌ ديني يتصدّر أكثر المستندات العربية الرسمية، ويُصفّ
+# عريضًا كبيرًا فيحقق كل شرط عنوان — لكنه ليس عنوان قسم: لا قسم تحته،
+# ولا معنى لإدراجه في فهرس. يُطبَّع بحذف التشكيل والمدّات لأن رسمه يختلف
+# بين المستندات («بسم الله» / «بسم اللّٰه»).
+RE_BASMALA = re.compile(r"^بسم\s*ا?لل[اه]?ه?\s*الرحمن\s*الرحيم$")
+
+# العنوان لا بدّ له من قدر من الحروف: سطر الـOCR المشوّش («© 5ه») يخرج
+# بحجم خط كبير فيُرقّى عنوانًا ويدخل الفهرس، فيُلوّث بنية المستند بضجيج.
+HEAD_MIN_LETTERS = 3
+
+
 def heading_shaped(text):
     """
     هل يصلح النص أن يكون عنوانًا شكلًا، بغضّ النظر عن حجم خطه؟
@@ -200,8 +219,43 @@ def heading_shaped(text):
     return len(stripped) < 120 and not stripped.endswith((".", "،", "؛"))
 
 
-def classify(line, opt, body_size):
-    """يرجّع أحد: top | sub | laiha | item | definition | para."""
+def _heading_content(text):
+    """
+    هل يحمل النص مضمونًا يصلح عنوانًا — لا بسملةً ولا ضجيج تمييز؟
+    """
+    bare = re.sub(r"[\u064B-\u0652\u0670\u0640]", "", text).strip()
+    if RE_BASMALA.match(bare):
+        return False
+    return len(AR_OR_LATIN.findall(bare)) >= HEAD_MIN_LETTERS
+
+
+def sentence_closed(text):
+    """
+    هل انتهت الجملة عند آخر هذا السطر؟
+
+    الأقواس وعلامات الاقتباس الخاتمة تُجرَّد قبل الفحص، وإلا عُدّ السطر
+    المنتهي بـ«…الجديدة».» جملةً مفتوحة لأن آخر محرف فيه قوسٌ لا نقطة.
+    """
+    return text.rstrip().rstrip('»"\'）)]}').rstrip().endswith(END_PUNCT)
+
+
+def classify(line, opt, body_size, prev=None, prev_kind=None):
+    """
+    يرجّع أحد: top | sub | laiha | item | definition | para.
+
+    `prev` السطر السابق و`prev_kind` تصنيفه — سياقٌ اختياري يمنع ترقية سطرٍ
+    هو تكملةُ جملةٍ لم تنتهِ بعد. الحجم وحده كان يكفي للترقية، فسطرٌ عريض
+    يقع في وسط جملة («…أرفع أسمى عبارات الشكر إلى مقام / **سيدي صاحب
+    السمو…**») يُقتطع عنوانًا فتنقطع الجملة نصفين، ويدخل نصفها فهرسَ
+    المستند — بينما بقيّة الكتلة نفسها تبقى فقرةً لأنها تنتهي بفاصلة،
+    فينشطر بلوك بصري واحد عنوانًا وفقرة.
+
+    الفجوة الرأسية لا تصلح حَكَمًا هنا: المستند واسع التسطير تتجاوز فيه كل
+    فجوة بين بلوكين عتبةَ الفقرة، فتُجيز الترقية في وسط الجملة تمامًا كما
+    تجيزها بعد نهايتها. الحَكَم الترقيم: العنوان يفتتح ما بعده فلا يقع
+    تكملةً لفقرة مفتوحة. والشرط مقصور على ما سبقه **فقرة** لأن العنوان
+    يتلو العنوان كثيرًا («الباب الأول» ثم «الفصل الأول») وكلاهما بلا نقطة.
+    """
     t, size, bold = line["text"], line["size"], line["bold"]
 
     if opt.profile == "saudi_law":
@@ -227,7 +281,11 @@ def classify(line, opt, body_size):
     # الحجم وحده لا يكفي: في الصفحة المحشوّة بنص صغير كثيف يخرج حجم المتن
     # الغالب أصغر من المتن الحقيقي، فترتفع الفقرات كلها فوق العتبة وتصير
     # «عناوين». الشكل يمنع ذلك — والجملة المنتهية بنقطة ليست عنوانًا.
-    if heading_shaped(t):
+    # تكملةُ فقرةٍ لم تُختم جملتها: سطرٌ في وسط الكلام مهما كبر خطه.
+    continues = (prev is not None and prev_kind == "para"
+                 and not sentence_closed(prev["text"]))
+
+    if heading_shaped(t) and _heading_content(t) and not continues:
         if size >= body_size + 3.5:
             return "top"
         if size >= body_size + 1.2 or (bold and size >= body_size + 0.5):
@@ -401,6 +459,7 @@ def _extract_pages(doc, opt, lo, hi, st, say, tick, cancel):
         # إصلاحات ذاك المسار (الرباط المقلوب، المسافة الوهمية، التشكيل
         # الطائر) كلها علل مجرى نص الـPDF، ولا مجرى نص في صفحة مقروءة من
         # بكسلاتها — تطبيقها هناك يفسد سليمًا لا يُصلح فاسدًا.
+        from_ocr = lines is not None
         if lines is None:
             lines = core.page_lines(page, st,
                                     unify_digits=opt.unify_digits,
@@ -411,6 +470,22 @@ def _extract_pages(doc, opt, lo, hi, st, say, tick, cancel):
         elif opt.unify_digits:
             for line in lines:
                 line["text"] = line["text"].translate(core.AR2WEST)
+
+        # مصدر السطر يُعلَّم هنا ليقرأه البناء عند حدود الصفحات: صفحة مقروءة
+        # من بكسلاتها لا تكمل فقرةَ صفحةٍ مقروءة من مجرى نصها.
+        for line in lines:
+            line["ocr"] = from_ocr
+
+        # الصفحة التي خرجت خاوية وكانت تستحق OCR: الخسارة تُسجَّل باسمها
+        # لتظهر علامةً في الناتج، فلا يضيع مرفقٌ كامل بلا أثر يدلّ عليه.
+        #
+        # استدعاء `page_verdict` هنا لا ينقض قرار تأجيله أعلاه: ذاك يفحص كل
+        # صفحة في المستند، وهذا لا يفحص إلا صفحةً خرجت بلا سطر واحد — وهي
+        # نادرة، وفحصها رخيص لأن لا طبقة نص فيها تُحلَّل.
+        if not lines:
+            why = ocr_engine.page_verdict(page, raw)[1]
+            if why:
+                st.setdefault("blank", {})[i] = why
 
         pages.append((i, lines, page.rect.height))
         if k % 5 == 0 or k == total - 1:
@@ -463,6 +538,7 @@ def _build_document(pages, opt, st, body_size, boiler, tick, cancel):
     """يبني المُجمِّع من الصفحات المستخرَجة — العناوين والفقرات والجداول."""
     builder = Builder(opt)
     prev = None
+    prev_kind = None
     in_laiha = False
 
     for k, (i, lines, height) in enumerate(pages):
@@ -470,6 +546,15 @@ def _build_document(pages, opt, st, body_size, boiler, tick, cancel):
             raise ConversionCancelled("أُلغي التحويل.")
         if opt.drop_toc and is_toc_page(lines, body_size):
             st["toc_skipped"] += 1
+            continue
+
+        # صفحة لم يخرج منها سطر واحد وهي تستحق OCR: تُعلَّم في المتن.
+        # بلا العلامة كانت تختفي بلا أثر — ثلاث صفحات مرفقات في مذكرة
+        # قضائية تتبخّر، وسطر الملخّص يقول «استُخرجت ٦ صفحة» فيطمئن
+        # القارئ إلى ناتج ينقصه نصف المستند ولا شيء في الملف يدلّه.
+        if i in st.get("blank", {}):
+            builder.blank_page(i + 1, st["blank"][i])
+            prev, prev_kind = None, None
             continue
 
         body, notes = _split_body_notes(lines, opt, height, body_size, boiler)
@@ -480,17 +565,35 @@ def _build_document(pages, opt, st, body_size, boiler, tick, cancel):
             # صف جدول: يُراكَم حتى ينقطع التتابع، ثم يُبنى الجدول دفعةً
             if _is_table_row(line, opt):
                 builder.row(line)
-                prev = line
+                prev, prev_kind = line, "row"
                 continue
             builder.close_table()
-
-            kind = classify(line, opt, body_size)
 
             # فقرة جديدة إذا اتسعت الفجوة الرأسية عن ارتفاع السطر × para_gap
             gap_big = False
             if prev is not None and idx > 0:
                 lh = max(line["y1"] - line["y0"], 1.0)
                 gap_big = (line["y0"] - prev["y1"]) > lh * opt.para_gap
+
+            # أول سطر في الصفحة: إحداثياته من صفحة أخرى، فـ`y` يعود إلى
+            # أعلاها والفجوة المحسوبة تخرج سالبة — لذلك يُستثنى بـ`idx > 0`
+            # من فحص الفجوة. لكن الاستثناء كان يمتدّ إلى فحص الترقيم أيضًا،
+            # فيخرج أول سطر في كل صفحة بلا أي سبب لبدء فقرة — ملتحمًا أبدًا
+            # بآخر فقرة في الصفحة السابقة مهما كان بينهما. في خطاب من ثلاث
+            # صفحات التحم بندان مرقّمان («…بشأنها. خامسًا: القيام…») والتحمت
+            # خاتمة الخطاب بآخر فقرة قبلها.
+            #
+            # عند الحدّ لا تنفع الهندسة، فيُحكم بالترقيم وحده: الصفحة
+            # السابقة انتهت بنهاية جملة ⇐ فقرة جديدة. والفقرة المنسابة عبر
+            # الصفحتين تنتهي بلا ترقيم ختامي فتبقى موصولة كما كانت.
+            cross_page = idx == 0 and prev is not None
+            if cross_page and (prev["text"].endswith(END_PUNCT)
+                               # صفحة مقروءة بالـOCR مصدرٌ آخر بالكلّية —
+                               # مرفق ممسوح لا يكمل جملةَ متنٍ مكتوب.
+                               or bool(prev.get("ocr")) != bool(line.get("ocr"))):
+                gap_big = True
+
+            kind = classify(line, opt, body_size, prev, prev_kind)
 
             if kind == "top":
                 builder.head(opt.h_top, t)
@@ -519,7 +622,7 @@ def _build_document(pages, opt, st, body_size, boiler, tick, cancel):
                     and line["x1"] < prev["x1"] - INDENT_TOL
                 )
                 builder.para(t, new_para or not builder.buf)
-            prev = line
+            prev, prev_kind = line, kind
 
         builder.close_table()
 
@@ -578,7 +681,8 @@ def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
         total = hi - lo + 1
         st = {"lig": 0, "pairs": {}, "pages": total, "toc_skipped": 0,
               "headings": 0, "notes": 0, "chars": 0, "tables": 0,
-              "watermark": 0, "ocr": 0, "ocr_missed": 0, "yeh": 0}
+              "watermark": 0, "ocr": 0, "ocr_missed": 0, "yeh": 0,
+              "blank": {}}
 
         # ── ١) الاستخراج ──
         pages = _extract_pages(doc, opt, lo, hi, st, say, tick, cancel)

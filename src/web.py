@@ -187,7 +187,7 @@ def diagnose_file(path, progress=None, name=None):
     except Exception as exc:  # noqa: BLE001 — الحدّ مع جافاسكربت
         return _fail(exc)
 
-    verdict, healthy = verdict_of(data["rows"])
+    verdict, healthy = verdict_of(data["rows"], data["ligatures"])
     if not data["has_text"]:
         verdict = ("الملف مصوّر بلا طبقة نص — يحتاج OCR قبل التحويل."
                    if data["needs_ocr"] else "لا توجد طبقة نص في هذا الملف.")

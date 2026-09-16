@@ -299,7 +299,7 @@ class DiagnosticsView(QWidget):
                        if d["needs_ocr"] else "لا توجد طبقة نص في هذا الملف.")
             color = BAD
         else:
-            verdict, ok = verdict_of(d["rows"])
+            verdict, ok = verdict_of(d["rows"], d["ligatures"])
             color = OK if ok else BAD
 
         # بيانات PDF الوصفية والأزواج نص خارجي غير موثوق داخل RichText
