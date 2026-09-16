@@ -20,9 +20,11 @@ from src.structure import (
     anchor_of,
     body_font_size,
     boiler_key,
+    classify,
     convert,
     diagnose,
     heading_shaped,
+    sentence_closed,
 )
 
 # ═══════════ توليد ملفات الاختبار ═══════════
@@ -333,3 +335,112 @@ def test_big_document_warns_once(tmp_path, monkeypatch):
     said = []
     convert(pdf, Options(check_ink=False), log=said.append)
     assert sum("مستند ضخم" in m for m in said) == 1
+
+
+# ═══════════ حدود الصفحات — التحام الفقرات ═══════════
+
+def test_page_break_after_full_stop_starts_new_paragraph(tmp_path):
+    """
+    أول سطر في الصفحة كان يلتحم أبدًا بآخر فقرة في الصفحة السابقة، لأن
+    فحص الفقرة كله مشروط بـ`idx > 0`. النتيجة: بندان مرقّمان يلتحمان
+    في فقرة واحدة عبر الحدّ.
+    """
+    pdf = make_pdf(tmp_path / "doc.pdf",
+                   [[("Fourth item ends the page here.", 700, 11)],
+                    [("Fifth item opens the next page.", 100, 11)]])
+    md, _ = convert(pdf, Options(check_ink=False, build_toc=False))
+    assert "here. Fifth" not in md
+    assert "Fourth item ends the page here." in md
+    assert "Fifth item opens the next page." in md
+
+
+def test_page_break_mid_sentence_keeps_paragraph_joined(tmp_path):
+    """الفقرة المنسابة عبر الصفحتين تبقى موصولة — الكسر بالترقيم لا بالحدّ."""
+    pdf = make_pdf(tmp_path / "doc.pdf",
+                   [[("A sentence that runs past the bottom of", 700, 11)],
+                    [("the page without ending anywhere.", 100, 11)]])
+    md, _ = convert(pdf, Options(check_ink=False, build_toc=False))
+    assert "bottom of the page without" in md
+
+
+# ═══════════ العناوين الكاذبة ═══════════
+
+# النص العربي يسقط من أي PDF يُولَّد هنا (لا محارف عربية في خطوط البيئة)،
+# فالعناوين العربية تُختبَر على مستوى classify بأسطر مصطنعة كما في
+# tests/test_saudi_law.py، والبناء الكامل بنص لاتيني.
+
+AUTO = Options()
+HBODY = 12.0
+
+
+def hline(text, size=HBODY, bold=False):
+    return {"text": text, "size": size, "bold": bold,
+            "x0": 0, "x1": 400, "y0": 0, "y1": size, "row": False, "cells": []}
+
+
+def test_basmala_is_not_a_heading():
+    """البسملة تُصفّ كبيرة عريضة فتحقق كل شرط عنوان — وليست عنوان قسم."""
+    assert classify(hline("بسم الله الرحمن الرحيم", HBODY + 4),
+                    AUTO, HBODY) == "para"
+    assert classify(hline("بسم الله الرحمن الرحيم", HBODY + 4, bold=True),
+                    AUTO, HBODY) == "para"
+    # عنوان حقيقي بالحجم نفسه يبقى عنوانًا — الحارس مقصور على البسملة
+    assert classify(hline("الباب الأول", HBODY + 4), AUTO, HBODY) == "top"
+
+
+def test_large_line_continuing_open_sentence_is_not_a_heading():
+    """
+    سطر عريض يقع في وسط جملة لم تُختم كان يُقتطع عنوانًا، فتنقطع الجملة
+    نصفين ويدخل نصفها الفهرس.
+    """
+    open_para = hline("نرفع أسمى عبارات الشكر وعظيم الامتنان إلى مقام")
+    got = classify(hline("صاحب السمو الملكي الأمير", HBODY + 4, bold=True),
+                   AUTO, HBODY, prev=open_para, prev_kind="para")
+    assert got == "para"
+
+
+def test_heading_after_closed_sentence_still_promoted():
+    """الحارس لا يمنع العنوان الصحيح: ما سبقته جملة تامّة يبقى عنوانًا."""
+    closed = hline("انتهت الفقرة السابقة عند هذا الحد.")
+    got = classify(hline("الباب الأول", HBODY + 4),
+                   AUTO, HBODY, prev=closed, prev_kind="para")
+    assert got == "top"
+
+
+def test_heading_may_follow_heading():
+    """عنوانٌ يتلو عنوانًا وكلاهما بلا نقطة — لا يُخفَّض الثاني."""
+    first = hline("الباب الأول", HBODY + 4)
+    got = classify(hline("الفصل الأول", HBODY + 2),
+                   AUTO, HBODY, prev=first, prev_kind="top")
+    assert got in ("top", "sub")
+
+
+def test_symbol_noise_is_not_a_heading():
+    """ضجيج التمييز («© 5ه») يخرج بخط كبير فكان يُرقّى عنوانًا ويدخل الفهرس."""
+    assert classify(hline("© 5ه", HBODY + 6), AUTO, HBODY) == "para"
+    assert classify(hline("— 12 —", HBODY + 6), AUTO, HBODY) == "para"
+    # ثلاثة حروف فأكثر تكفي مضمونًا
+    assert classify(hline("تمهيد", HBODY + 6), AUTO, HBODY) == "top"
+
+
+def test_sentence_closed_ignores_trailing_brackets():
+    assert sentence_closed("انتهت الجملة هنا.")
+    assert sentence_closed("ومهام وظيفة «كاتب استعلامات».")
+    assert sentence_closed('He said "it is done."')
+    assert not sentence_closed("جملة مفتوحة إلى مقام")
+    assert not sentence_closed("عبارة تنتهي بفاصلة،")
+
+
+def test_verdict_names_damage_when_canaries_absent():
+    """
+    الكلمات المؤشّرة ثماني كلمات من معجم الأنظمة. المستند الذي لا يذكرها —
+    خطاب أو مذكرة — كان يخرج جدوله أصفارًا فيُحكم عليه بالسلامة وإن أُصلح
+    فيه كل رباط، فيُغري المستخدم بـ--no-ligatures.
+    """
+    rows = [{"before_bad": 0, "after_bad": 0}]
+    text, ok = common.verdict_of(rows, ligatures=53)
+    assert ok is True
+    assert "سليم" not in text
+    assert "53" in text
+    # بلا رباطات مُصلَحة يبقى الحكم على حاله
+    assert "سليم" in common.verdict_of(rows, ligatures=0)[0]
