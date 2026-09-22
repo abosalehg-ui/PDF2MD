@@ -682,13 +682,17 @@ def convert(pdf_path, opt=None, progress=None, log=None, cancel=None):
         st = {"lig": 0, "pairs": {}, "pages": total, "toc_skipped": 0,
               "headings": 0, "notes": 0, "chars": 0, "tables": 0,
               "watermark": 0, "ocr": 0, "ocr_missed": 0, "yeh": 0,
-              "blank": {}}
+              "kashida": 0, "mirror": 0, "blank": {}}
 
         # ── ١) الاستخراج ──
         pages = _extract_pages(doc, opt, lo, hi, st, say, tick, cancel)
         say(f"استُخرجت {total} صفحة — أُصلح {st['lig']:,} رباطًا مقلوبًا.")
         if st["yeh"]:
             say(f"أُصلحت {st['yeh']:,} ياء مكسورة (مسافة + تنوين).")
+        if st["kashida"]:
+            say(f"حُذفت {st['kashida']:,} كشيدة ضبط (تطويل محشو بين الحروف).")
+        if st["mirror"]:
+            say(f"عُكس {st['mirror']:,} قوسًا مخزَّنًا بشكله البصري.")
         if st["ocr"]:
             say(f"قُرئت {st['ocr']:,} صفحة بالـOCR — طبقة نصها معطوبة.")
         if st["ocr_missed"]:
