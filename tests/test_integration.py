@@ -371,3 +371,26 @@ def test_tsv_receives_the_cancel_object(monkeypatch):
     ocr.page_lines(page, cancel=stop)
     assert got["cancel"] is stop
     doc.close()
+
+
+def test_scanned_page_without_ocr_leaves_a_marker(tmp_path, monkeypatch):
+    """
+    الصفحة الممسوحة ضوئيًا التي تعذّر قراءتها كانت تختفي من الناتج بلا أثر:
+    ملف من ست صفحات يخرج بنص ثلاث، وسطر الملخّص يقول «استُخرجت ٦ صفحة».
+    """
+    from src import ocr as ocr_engine
+    from src.structure import Options, convert
+
+    monkeypatch.setattr(ocr_engine, "available", lambda: False)
+
+    doc = fitz.open()
+    _text_page(doc, lines=6)
+    page = doc.new_page()                 # صفحة صورة خالصة بلا طبقة نص
+    _gray_image(page, fitz.Rect(40, 40, 555, 780))
+    pdf = str(tmp_path / "scan.pdf")
+    doc.save(pdf)
+    doc.close()
+
+    md, st = convert(pdf, Options(check_ink=False))
+    assert "⚠ ص 2" in md
+    assert st["blank"]

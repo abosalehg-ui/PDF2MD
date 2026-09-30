@@ -7,6 +7,8 @@
 القواعد المُختبرة هي نفسها التي تعمل على الملفات الحقيقية.
 """
 
+import re
+
 from src import core
 
 # ═══════════ أدوات بناء rawdict مصطنع ═══════════
@@ -158,3 +160,140 @@ def test_tidy_rules():
 
 def test_tidy_collapses_whitespace():
     assert core.tidy("أ  ب\tج") == "أ ب ج"
+
+
+# ═══════════ ٦. كشيدة الضبط ═══════════
+# محاذي Pages/Quartz يحشو تطويلات هزيلة بين الحروف المتصلة لضبط السطر.
+# كانت التطويلة تُعامل تشكيلًا فتُلصَق بأقرب حرف — وتخرج أحيانًا في آخر
+# الكلمة («رقمـ») بعيدًا عن موضعها.
+
+def lines_of(page, stats=None, **kw):
+    return core.build_lines(core.page_units(page, stats, **kw), stats=stats)
+
+
+def test_kashida_between_letters_dropped():
+    chars = [
+        ch("ا", 96, x1=100),
+        ch("ت", 92, x1=96),
+        ch("ـ", 91.5, x1=92),       # كشيدة هزيلة بين التاء والقاف
+        ch("ق", 86, x1=91.5),
+        ch("د", 82, x1=86),
+        ch("م", 78, x1=82),
+    ]
+    stats = {}
+    assert lines_of(page_of(chars), stats)[0]["text"] == "اتقدم"
+    assert stats["kashida"] == 1
+
+
+def test_kashida_run_dropped_together():
+    chars = [
+        ch("ر", 96, x1=100),
+        ch("ـ", 93, x1=96),
+        ch("ـ", 90, x1=93),
+        ch("ق", 86, x1=90),
+    ]
+    assert lines_of(page_of(chars))[0]["text"] == "رق"
+
+
+def test_kashida_before_space_kept():
+    # «١٤٤٨هـ ضد»: التطويلة جزء من اختصار الهجري، ويليها فراغ لا حرف
+    chars = [
+        ch("ه", 96, x1=100),
+        ch("ـ", 93, x1=96),
+        ch(" ", 89, x1=93),
+        ch("ض", 85, x1=89),
+        ch("د", 81, x1=85),
+    ]
+    stats = {}
+    assert lines_of(page_of(chars), stats)[0]["text"] == "هـ ضد"
+    assert "kashida" not in stats
+
+
+def test_kashida_at_line_edges_kept():
+    chars = [ch("ـ", 96, x1=100), ch("ب", 92, x1=96), ch("ـ", 88, x1=92)]
+    assert lines_of(page_of(chars))[0]["text"] == "ـبـ"
+
+
+def test_kashida_never_hosts_a_diacritic():
+    # التنوين فوق الألف يبقى على الألف وإن كانت الكشيدة أقرب مركزًا،
+    # وتُحذف الكشيدة رغم أن الحرف التالي يحمل تشكيلًا.
+    chars = [
+        ch("ر", 96, x1=100),
+        ch("ـ", 95.5, x1=96),
+        ch("ا", 92, x1=95.5),
+        ch("ً", 95.4, x1=95.6),     # يلامس الكشيدة والألف معًا
+    ]
+    assert lines_of(page_of(chars))[0]["text"] == "راً"
+
+
+def test_zero_width_kashida_is_not_a_ligature_half():
+    chars = [ch("ب", 96, x1=100), ch("ـ", 96, x1=96.01), ch("ت", 92, x1=96)]
+    stats = {}
+    assert lines_of(page_of(chars), stats)[0]["text"] == "بت"
+    assert "lig" not in stats
+
+
+# ═══════════ ٧. الأقواس المخزَّنة بشكلها البصري ═══════════
+# Quartz يكتب في المجرى جليف القوس المرسوم لا حرفه المنطقي، فبعد الترتيب
+# البصري يخرج «)مرفق1(». Word يكتب الحرف المنطقي فيخرج سليمًا. القرار
+# للصفحة كلها من سياق الأقواس (فراغ قبل الفاتح، ترقيم أو فراغ بعد الغالق).
+
+def rtl_line(text, y0=0.0, y1=10.0, x_right=400.0):
+    """
+    أحرف نص عربي بترتيب القراءة تُرصف من اليمين إلى اليسار، ٤ نقاط لكل
+    حرف. تسلسل الأرقام يُرصف داخله من اليسار إلى اليمين كما يُرسم فعلًا.
+    """
+    out, x = [], x_right
+    for run in re.findall(r"\d+|\D", text):
+        for c in reversed(run):
+            out.append(ch(c, x - 4, y0=y0, x1=x, y1=y1))
+            x -= 4
+    return out
+
+
+def test_visual_brackets_mirrored():
+    chars = rtl_line("شهراً )مرفق1(، وكانت")
+    stats = {}
+    assert lines_of(page_of(chars), stats)[0]["text"] == "شهراً (مرفق1)، وكانت"
+    assert stats["mirror"] == 2
+
+
+def test_logical_brackets_untouched():
+    chars = rtl_line("المادة (12): نص")
+    stats = {}
+    assert lines_of(page_of(chars), stats)[0]["text"] == "المادة (12): نص"
+    assert "mirror" not in stats
+
+
+def test_space_after_mirrored_closer_survives_tidy():
+    # قبل الإصلاح كان tidy يحذف الفراغ بعد «(» فيخرج «(مرفق3(أي» ملتحمًا
+    chars = rtl_line("- )مرفق3( أي قبل")
+    assert lines_of(page_of(chars))[0]["text"] == "- (مرفق3) أي قبل"
+
+
+def test_bracket_decision_is_page_wide():
+    # قوس يُفتح في سطر ويُغلق في التالي: كل سطر وحده يحمل قوسًا واحدًا،
+    # والصفحة كلها تحسم أن المخزون بصري.
+    page = FakePage([{
+        "type": 0,
+        "lines": [
+            {"spans": [{"chars": rtl_line("نص على أنه )يتجدد", 0, 10),
+                        "size": 12.0, "font": "Test", "flags": 0}]},
+            {"spans": [{"chars": rtl_line("انتهاء العقد(، مما", 20, 30),
+                        "size": 12.0, "font": "Test", "flags": 0}]},
+        ],
+    }])
+    texts = [line["text"] for line in lines_of(page)]
+    assert texts == ["نص على أنه (يتجدد", "انتهاء العقد)، مما"]
+
+
+def test_bracket_votes():
+    assert core.bracket_votes("شهراً )مرفق1(، و") == (2, 0)
+    assert core.bracket_votes("المادة (12):") == (0, 2)
+    assert core.bracket_votes("أ ( ) ب") == (0, 0)          # ملتبس: لا صوت
+    assert core.bracket_votes("بلا أقواس") == (0, 0)
+
+
+def test_latin_lines_never_mirrored():
+    chars = [ch(c, 10 + 4 * k, x1=14 + 4 * k) for k, c in enumerate("f(x) = 1")]
+    assert lines_of(page_of(chars))[0]["text"] == "f(x) = 1"

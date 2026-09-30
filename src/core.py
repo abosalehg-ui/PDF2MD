@@ -17,6 +17,8 @@ core.py — محرّك الاستخراج في PDF2MD.
   5. رقم معكوس      : LTR داخل RTL               -> عكس التسلسل (6/5/1436 → 1436/6/5)
   6. تشكيل طائر     : يسبق حرفه في المجرى         -> ربط إحداثي  (يوما.ً → يوماً.)
   7. ياء مكسورة     : ياء = مسافة + تنوين بعرض صفر -> نضمّها      (تف ٌد → تفيد)
+  8. كشيدة الضبط    : تطويل يحشوه المحاذي بين الحروف -> نحذفه       (اتـقدم → اتقدم)
+  9. قوس معكوس      : القوس مخزَّن بشكله البصري       -> نعكسه       ()مرفق( → (مرفق))
 
 ما لا يُصلَح هنا: خريطة ToUnicode المكسورة كليًا (الجليف العربي يخرج حرفًا
 لاتينيًا عشوائيًا) والصفحة الممسوحة ضوئيًا. لا معلومة في المجرى تُنقذهما،
@@ -116,8 +118,36 @@ DIAC = "\u0001"     # بادئة وحدة تشكيل
 
 TASHKEEL = set(
     "ًٌٍَُِّْ"
-    "ٰٕٖٓٔٗ٘ـ"
+    "ٰٕٖٓٔٗ٘"
 )
+
+# ═══════════════ كشيدة الضبط ═══════════════
+# التطويل (U+0640) ليس تشكيلًا وإن كان بلا صوت: التشكيل يُلصَق بحرفه أينما
+# وقع في المجرى، أما التطويل فموضعه على السطر هو معناه كله. كان مدرجًا في
+# TASHKEEL فيُلصَق بأقرب حرف ويُكتب بعده — فيخرج «رقمـ» بتطويل في آخر
+# الكلمة وهو في الأصل بين القاف والميم. الآن هو وحدة عادية تُرتَّب بموضعها.
+#
+# محاذي Pages/Quartz يضبط السطر بحشو تطويلات هزيلة (عرضها أقل من نقطة، كل
+# واحدة في جزء مستقل بحجم خط مختلف) بين حرفين متصلين — ٤٠٠ تطويلة في صفحة
+# واحدة. وكشيدة Word مثلها معنًى وإن طالت. القاعدة موضعية لا عَرْضية: التطويل
+# المحصور بين حرفين عربيين داخل الكلمة زخرفة ضبط تُحذف، وما عداه محتوى
+# يبقى — «١٤٤٨هـ» و«بـ» و«الـ» كلها يليها فراغ أو رقم لا حرف.
+KASHIDA = "\u0640"
+
+# ═══════════════ الأقواس المخزَّنة بشكلها البصري ═══════════════
+# القوس حرفٌ مرآتي: «(» في نص RTL يُرسم بجليف «)». بعض المولِّدات (Quartz)
+# تكتب في المجرى الجليف المرسوم لا الحرف المنطقي، فبعد الترتيب البصري
+# يمين→يسار يخرج «)مرفق1(». وأخرى (Word) تكتب الحرف المنطقي فيخرج سليمًا.
+# لا شيء في rawdict يقول أيّهما، فيُستدلّ من السياق: القوس الذي قبله فراغ
+# وبعده حرف يعمل فاتحًا، والذي قبله حرف وبعده فراغ أو ترقيم يعمل غالقًا.
+# فإن كان أكثر أقواس الصفحة يعمل عكس شكله فالمخزون بصري وتُعكس كلها.
+# القرار على مستوى الصفحة لا القوس: القوس الواحد قد يلتبس (يفتح في سطر
+# ويُغلق في التالي)، والصفحة كلها من مولِّد واحد.
+MIRROR = str.maketrans("()[]{}<>«»‹›", ")(][}{><»«›‹")
+OPENERS = frozenset("([{<«‹")
+CLOSERS = frozenset(")]}>»›")
+# ما يلي القوس الغالق عادةً غير الفراغ: ترقيم يلتصق به
+AFTER_CLOSE = frozenset("،؛,:.!؟;")
 
 # الأرقام الهندية والفارسية أرقام «قوية» مثل اللاتينية في اتجاه الكتابة،
 # لأنها تظهر مختلطة داخل العدد الواحد.
@@ -246,6 +276,12 @@ def drop_watermarks(blocks):
         if keep_lines:
             kept.append(dict(blk, lines=keep_lines))
     return kept, dropped
+
+
+def _lig_part(char):
+    """هل يصلح الحرف نصفَ رباط أو حاملًا له؟ الفراغ والتشكيل والتطويل لا."""
+    g = char["c"]
+    return not g.isspace() and g not in TASHKEEL and g != KASHIDA
 
 
 def _char_zero(char, size):
@@ -382,15 +418,15 @@ def page_units(page, stats=None, fix_ligatures=True, drop_watermark=True,
                         i += 1
                         continue
 
-                    # رباط مقلوب
-                    if fix_ligatures and _zero_width(c):
+                    # رباط مقلوب. التطويل لا يدخل فيه لا نصفًا ولا حاملًا:
+                    # كشيدة هزيلة قد تنزل تحت ZERO_W فتُقرأ نصف رباط وتُلصق
+                    # بالحرف التالي، فيضيع موضعها الذي تُحذف به لاحقًا.
+                    if fix_ligatures and g != KASHIDA and _zero_width(c):
                         j = i + 1
                         while (j < n and _zero_width(chars[j])
-                               and not chars[j]["c"].isspace()
-                               and chars[j]["c"] not in TASHKEEL):
+                               and _lig_part(chars[j])):
                             j += 1
-                        if (j < n and not chars[j]["c"].isspace()
-                                and chars[j]["c"] not in TASHKEEL):
+                        if j < n and _lig_part(chars[j]):
                             base = chars[j]
                             key = base["c"] + "".join(
                                 chars[k]["c"] for k in range(j - 1, i - 1, -1))
@@ -583,8 +619,7 @@ def _attach_diacritics(group):
     بين حرفين — فيحتويها الحرفان معًا. عندها نرجّح الأقرب مركزًا، وهو
     ترجيح هندسي محض لا يعتمد على ترتيب المجرى.
     """
-    letters = [u for u in group
-               if not u.is_mark and not u.is_diac and AR_LETTER.match(u.t[0])]
+    letters = [u for u in group if _is_letter(u) and not u.is_diac]
     if letters:
         for u in group:
             if not u.is_diac:
@@ -602,7 +637,79 @@ def _is_numeric(u):
     return (not u.is_mark) and (LTR_STRONG.match(u.t[0]) or u.t in NUM_SEP)
 
 
-def _join_units(units, rtl, ink, z, band_y0, band_y1):
+def _is_letter(u):
+    """حرف عربي حقيقي — لا علامة حدّ ولا تطويل (وهو داخل مدى AR_LETTER)."""
+    return (not u.is_mark and u.t[0] != KASHIDA
+            and AR_LETTER.match(u.t[0]) is not None)
+
+
+def drop_kashida(group, stats=None):
+    """
+    يحذف كشيدة الضبط من وحدات سطر مرتّبة بترتيب القراءة.
+
+    التطويل المحصور بين حرفين عربيين — بلا فراغ من أي جهة — حشوُ محاذاة
+    لا محتوى: «اتـقدم» تُقرأ «اتقدم» أيًّا كان عرض التطويل. وما وقع عند
+    حدّ الكلمة يبقى، فهو مقصود: «١٤٤٨هـ» يليه فراغ، و«الـ ٣٠» يليه رقم.
+
+    تتابع التطويلات يُعامل واحدًا: كل ما بين الحرفين يسقط معًا.
+
+    الحرف التالي يُعلَّم glue: الكشيدة تترك مكانها فجوة بعرضها، وكشيدة
+    Word تبلغ نقاطًا لا أعشارها، فلولا العلامة أعادت قاعدة الفجوة مسافةً
+    داخل الكلمة («ر ق» بدل «رق»).
+
+    يعمل بعد الفرز لا قبله، لأن الحكم بالجوار في ترتيب القراءة: المجرى
+    يضع الكشيدة في جزء مستقل قد يسبق حرفيها أو يليهما.
+    """
+    out, n = [], len(group)
+    for k, u in enumerate(group):
+        if u.t == KASHIDA:
+            i = k - 1
+            while i >= 0 and group[i].t == KASHIDA:
+                i -= 1
+            j = k + 1
+            while j < n and group[j].t == KASHIDA:
+                j += 1
+            if i >= 0 and j < n and _is_letter(group[i]) and _is_letter(group[j]):
+                group[j].glue = True
+                if stats is not None:
+                    stats["kashida"] = stats.get("kashida", 0) + 1
+                continue
+        out.append(u)
+    return out
+
+
+def bracket_votes(text):
+    """
+    يرجّع (أصوات «مخزون بصري»، أصوات «مخزون منطقي») لنص سطر واحد.
+
+    النص يجب أن يكون **قبل** tidy: التنظيف يحذف الفراغ بعد «(» وقبل «)»
+    اعتمادًا على شكل القوس، فيمحو الدليل الذي يُحكم به هنا. القوس الذي
+    يعمل فاتحًا (قبله فراغ أو قوس فاتح، وبعده حرف) وشكله فاتح يصوّت
+    «منطقي»، وإن كان شكله غالقًا صوّت «بصري». والعكس للغالق. القوس الذي
+    يلتبس عمله — فراغ من الجهتين أو حرف من الجهتين — لا يصوّت.
+    """
+    visual = logical = 0
+    n = len(text)
+    for k, c in enumerate(text):
+        is_open, is_close = c in OPENERS, c in CLOSERS
+        if not (is_open or is_close):
+            continue
+        left = text[k - 1] if k else " "
+        right = text[k + 1] if k + 1 < n else " "
+        acts_open = ((left.isspace() or left in OPENERS)
+                     and not right.isspace() and right not in CLOSERS)
+        acts_close = ((right.isspace() or right in CLOSERS or right in AFTER_CLOSE)
+                      and not left.isspace() and left not in OPENERS)
+        if acts_open == acts_close:
+            continue
+        if acts_open == is_open:
+            logical += 1
+        else:
+            visual += 1
+    return visual, logical
+
+
+def _join_units(units, rtl, ink, z, band_y0, band_y1, clean=True):
     """
     يجمع وحدات مرتّبة بترتيب القراءة في نص واحد.
 
@@ -613,6 +720,9 @@ def _join_units(units, rtl, ink, z, band_y0, band_y1):
     الوحدة السابقة في ترتيب القراءة. الفرق يظهر بعد عكس تسلسل رقمي: آخر وحدة
     في القراءة تقع عند الطرف المقابل من العدد، فتُحسب فجوة وهمية بعرض العدد
     كله (3/1 - بدل 3/1-).
+
+    `clean=False` يرجّع النص قبل tidy — لمن يحتاج الفراغات حول الأقواس
+    دليلًا قبل أن يمحوها التنظيف (bracket_votes).
     """
     parts, prev, pending, front = [], None, False, None
     for u in units:
@@ -631,10 +741,11 @@ def _join_units(units, rtl, ink, z, band_y0, band_y1):
         front = edge if front is None else (min(front, edge) if rtl
                                             else max(front, edge))
         prev, pending = u, False
-    return tidy("".join(parts))
+    text = "".join(parts)
+    return tidy(text) if clean else text
 
 
-def _split_cells(units, seg_boxes, rtl, ink, z, band_y0, band_y1):
+def _split_cells(units, seg_boxes, rtl, ink, z, band_y0, band_y1, clean=True):
     """
     يقسّم وحدات صف جدول إلى خلايا نصية، خلية لكل جزء من أجزاء rawdict.
 
@@ -646,18 +757,24 @@ def _split_cells(units, seg_boxes, rtl, ink, z, band_y0, band_y1):
     cells = []
     for bx0, bx1 in ordered:
         part = [u for u in units if bx0 - 0.5 <= (u.x0 + u.x1) / 2 <= bx1 + 0.5]
-        text = _join_units(part, rtl, ink, z, band_y0, band_y1) if part else ""
+        text = (_join_units(part, rtl, ink, z, band_y0, band_y1, clean)
+                if part else "")
         cells.append(text)
     return cells
 
 
-def build_lines(units, ink=None, z=1.0):
-    """يحوّل وحدات الصفحة إلى أسطر نصية مرتّبة بصريًا."""
+def build_lines(units, ink=None, z=1.0, stats=None):
+    """
+    يحوّل وحدات الصفحة إلى أسطر نصية مرتّبة بصريًا.
+
+    الأسطر تُجمع كلها قبل التنظيف النهائي، لأن قرار الأقواس (بصري أم
+    منطقي) يُؤخذ على الصفحة كاملة من فراغات يمحوها التنظيف.
+    """
     if not units:
         return []
 
     groups, boxes = _group_segments(units)
-    lines = []
+    drafts = []       # (السطر، هل هو RTL، نصه الخام، خلاياه الخام)
 
     for group, seg_boxes in zip(groups, boxes):
         # صف جدول: أربعة أجزاء فأكثر تفصلها فجوات أفقية واسعة
@@ -672,6 +789,7 @@ def build_lines(units, ink=None, z=1.0):
         # اتجاه السطر: فيه حرف عربي => تنازليًا حسب x1، وإلا تصاعديًا حسب x0
         rtl = any(AR_LETTER.match(u.t[0]) for u in group if not u.is_mark)
         group.sort(key=(lambda u: -u.x1) if rtl else (lambda u: u.x0))
+        group = drop_kashida(group, stats)
 
         real = [u for u in group if not u.is_mark]
         if not real:
@@ -690,21 +808,41 @@ def build_lines(units, ink=None, z=1.0):
         if rtl:
             group = reverse_ltr_runs(group)
 
-        text = _join_units(group, rtl, ink, z, band_y0, band_y1)
+        text = _join_units(group, rtl, ink, z, band_y0, band_y1, clean=False)
+        # خلايا الصف تُستخرَج فقط لصفوف الجداول، وتُستهلَك في
+        # structure.py لبناء جدول Markdown حقيقي.
+        cells = (_split_cells(group, seg_boxes, rtl, ink, z, band_y0, band_y1,
+                              clean=False) if is_row else [])
+        drafts.append(({
+            "x0": min(u.x0 for u in real), "x1": max(u.x1 for u in real),
+            "y0": min(u.y0 for u in real), "y1": max(u.y1 for u in real),
+            "size": max(u.size for u in real),
+            "bold": any(u.bold for u in real),
+            "row": is_row,
+        }, rtl, text, cells))
+
+    # الأقواس: صوت واحد للصفحة من أسطرها العربية. اللاتينية لا تُمسّ —
+    # لا مرآة في نص LTR أصلًا.
+    visual = logical = 0
+    for _, rtl, text, _ in drafts:
+        if rtl:
+            v, lg = bracket_votes(text)
+            visual, logical = visual + v, logical + lg
+    mirror = visual > logical
+
+    lines = []
+    for line, rtl, text, cells in drafts:
+        if mirror and rtl:
+            if stats is not None:
+                stats["mirror"] = stats.get("mirror", 0) + sum(
+                    c in OPENERS or c in CLOSERS for c in text)
+            text = text.translate(MIRROR)
+            cells = [c.translate(MIRROR) for c in cells]
+        text = tidy(text)
         if text:
-            # خلايا الصف تُستخرَج فقط لصفوف الجداول، وتُستهلَك في
-            # structure.py لبناء جدول Markdown حقيقي.
-            cells = (_split_cells(group, seg_boxes, rtl, ink, z, band_y0, band_y1)
-                     if is_row else [])
-            lines.append({
-                "text": text,
-                "x0": min(u.x0 for u in real), "x1": max(u.x1 for u in real),
-                "y0": min(u.y0 for u in real), "y1": max(u.y1 for u in real),
-                "size": max(u.size for u in real),
-                "bold": any(u.bold for u in real),
-                "row": is_row,
-                "cells": cells,
-            })
+            line["text"] = text
+            line["cells"] = [tidy(c) for c in cells]
+            lines.append(line)
     return lines
 
 
@@ -751,7 +889,7 @@ def page_lines(page, stats=None, unify_digits=True, check_ink=True,
     ink, z = ink_map(page) if check_ink else (None, 1.0)
     lines = build_lines(
         page_units(page, stats, fix_ligatures, drop_watermark, mend_yeh, raw),
-        ink, z)
+        ink, z, stats)
     if unify_digits:
         for line in lines:
             line["text"] = line["text"].translate(AR2WEST)

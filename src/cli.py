@@ -160,7 +160,7 @@ def print_diag(pdf, d):
     for r in d["rows"]:
         print(f"   {r['word']:<12}{r['before_ok']:>8}{r['before_bad']:>8}"
               f"{r['after_ok']:>8}{r['after_bad']:>8}")
-    verdict, ok = verdict_of(d["rows"])
+    verdict, ok = verdict_of(d["rows"], d["ligatures"])
     print(f"\n   {'✓' if ok else '!'} {verdict}")
 
 

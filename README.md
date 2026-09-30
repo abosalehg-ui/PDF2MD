@@ -128,7 +128,30 @@
 
 الفحص يجري على السطر لا على الجزء الواحد، لأن المولِّد يقطع أحيانًا بين القاعدة ونقطتيها فتخرج المسافة جزءًا قائمًا بذاته ويبدأ الجزء التالي بالتنوين (`الت ً تم` ← `التي تم`).
 
-### ٩. القراءة الضوئية (OCR) — ما لا يُصلَح هندسيًا
+### ٩. كشيدة الضبط
+
+محاذي Pages/Quartz يضبط السطر بحشو **تطويلات** (`ـ` U+0640) هزيلة بين الحروف المتصلة: كل واحدة في جزء مستقل بحجم خط مختلف وعرضها أقل من نقطة — ٤٠٠ تطويلة في صفحة واحدة. وكشيدة Word مثلها معنًى وإن طالت.
+
+كانت التطويلة تُعامل تشكيلًا فتُلصَق بأقرب حرف وتُكتب بعده، فتخرج `اتقـدم` و`رقمـ` — وفي الثانية التطويلة في آخر الكلمة وهي أصلًا بين القاف والميم. الآن هي وحدة عادية تُرتَّب بموضعها على السطر، ثم تُطبَّق قاعدة موضعية لا عَرْضية:
+
+| موضع التطويلة | الحكم | مثال |
+|---|---|---|
+| بين حرفين عربيين داخل الكلمة | حشو ضبط — تُحذف | `اتـقدم` ← `اتقدم` |
+| يليها فراغ أو رقم أو نهاية سطر | محتوى — تبقى | `1448هـ`، `بـ`، `الـ 30` |
+
+الحرف التالي للتطويلة المحذوفة يُعلَّم `glue` حتى لا تعيد قاعدة الفجوة (القسم ٥) إدراج مسافة في الفراغ الذي تركته — فكشيدة Word تبلغ نقاطًا لا أعشارها.
+
+### ١٠. الأقواس المخزَّنة بشكلها البصري
+
+القوس حرف **مرآتي**: `(` في نص عربي يُرسم بجليف `)`. بعض المولِّدات (Quartz) تكتب في المجرى الجليف **المرسوم** لا الحرف المنطقي، فبعد الترتيب البصري يمين→يسار يخرج `)مرفق1(`. وأخرى (Word) تكتب الحرف المنطقي فيخرج سليمًا — ولا شيء في `rawdict` يقول أيّهما.
+
+يُستدلّ من السياق: القوس الذي قبله فراغ وبعده حرف **يعمل** فاتحًا، والذي قبله حرف وبعده فراغ أو ترقيم يعمل غالقًا. كل قوس يصوّت «منطقي» إن طابق عمله شكله و«بصري» إن خالفه، والملتبس (فراغ من الجهتين أو حرف من الجهتين) لا يصوّت. فإن غلب «بصري» على الصفحة عُكست أقواسها كلها: `()[]{}<>«»‹›`.
+
+القرار **على مستوى الصفحة لا القوس**: القوس الواحد قد يُفتح في سطر ويُغلق في التالي فيلتبس وحده، والصفحة كلها من مولِّد واحد. والأسطر اللاتينية لا تُمسّ، فلا مرآة في نص LTR أصلًا.
+
+ويجري هذا **قبل** التنظيف النهائي لا بعده: التنظيف يحذف الفراغ بعد `(` وقبل `)` بحسب شكل القوس، فكان يمحو الدليل ويلحم ما بعد القوس بما قبله: `(مرفق3(أي` بدل `(مرفق3) أي`.
+
+### ١١. القراءة الضوئية (OCR) — ما لا يُصلَح هندسيًا
 
 الأقسام السابقة كلها تصلح خللًا **هندسيًا** في طبقة نص موجودة وصحيحة المحتوى. لكن صنفين من الملفات لا تُنقذهما الإحداثيات، لأن المعلومة الأصلية غير موجودة في المجرى أصلًا:
 
@@ -140,22 +163,30 @@
 
 الصفحة التي يثبت عطبها تُقرأ من بكسلاتها عبر **Tesseract** بمخرَج TSV — كلمة في كل سطر ومعها صندوقها وثقتها — وتُبنى منه الأسطر مباشرةً. الصفحة السليمة تبقى على نصها الأصلي، فهو أدقّ من أي OCR.
 
-**لماذا TSV لا غلاف PyMuPDF:** الغلاف يبني الحروف بتقسيم صندوق الكلمة بالتساوي ثم يعيد ترتيبها، فيقلب بعض الأسطر العربية رأسًا على عقب (`نهاية العقد` ← `دقعلا ةياهن`). ولهذا أيضًا لا يمرّ ناتج الـOCR على إصلاحات الأقسام ١–٨: كلها علل مجرى نص، ولا مجرى نص في صفحة مقروءة من بكسلاتها — تطبيقها هناك يفسد سليمًا لا يُصلح فاسدًا.
+**لماذا TSV لا غلاف PyMuPDF:** الغلاف يبني الحروف بتقسيم صندوق الكلمة بالتساوي ثم يعيد ترتيبها، فيقلب بعض الأسطر العربية رأسًا على عقب (`نهاية العقد` ← `دقعلا ةياهن`). ولهذا أيضًا لا يمرّ ناتج الـOCR على إصلاحات الأقسام ١–١٠: كلها علل مجرى نص، ولا مجرى نص في صفحة مقروءة من بكسلاتها — تطبيقها هناك يفسد سليمًا لا يُصلح فاسدًا.
 
 **الترتيب داخل السطر** بمركز الكلمة لا بحافّتها: المميِّز يبالغ أحيانًا في عرض صندوق كلمة فيبتلع جارتها، فتتقدّم عليها عند الفرز بالحافة (`مذكرة تفيد بأحقية` ← `مذكرة بأحقية تفيد`).
 
 **Tesseract اختياري.** بدونه تعمل الأداة كما كانت، وتقول لك مرة واحدة في أول التحويل إنه غائب وإن الصفحات الممسوحة أو المعطوبة الخط ستخرج ناقصة — بدل أن تُخرج ملفًا فارغًا بلا إنذار.
 
+**والخسارة تُعلَّم في الناتج نفسه** لا في سجلّ التحويل وحده: الصفحة التي لم يخرج منها سطر واحد وهي تستحق الـOCR تترك مكانها سطرًا ظاهرًا:
+
+```
+> ⚠ ص 4: صفحة ممسوحة ضوئيًا بلا طبقة نص — لم تُقرأ، فلا نص لها هنا.
+```
+
+بدون العلامة كانت الصفحة تختفي بلا أثر: مذكرة من ست صفحات، ثلاثٌ منها مرفقات ممسوحة، تخرج بنص ثلاث صفحات فقط — وسطر الملخّص يقول «استُخرجت ٦ صفحة»، فيطمئن القارئ إلى ملفٍ ينقصه نصف المستند ولا شيء فيه يدلّه على ما ضاع.
+
 وحكم الصفحة لا يُحسب أصلًا حين يكون Tesseract غائبًا: الحكم يفحص كل صفحة ثلاثة فحوص، وحسابه بلا تنفيذ كان يكلّف **٦٨٪ من زمن التحويل** (مقيس على ٤٠ صفحة: ٠٫٢٥ ← ٠٫٤٢ ثانية) مقابل تحذير لا يملك المستخدم حياله شيئًا. أما **الفحص التشخيصي** (`--diag`) فيحسبه دائمًا، لأن غايته أن يقول لك إن كنت تحتاج Tesseract أصلًا.
 
-### ١٠. تنظيف نهائي
+### ١٢. تنظيف نهائي
 
 حذف رموز التحكم الاتجاهي (`200E` `200F` `202A-202E` `2066-2069` `00AD` `FEFF`)، وتطبيع `NFC`، وإزالة المسافة بعد فتح القوس وقبل إغلاقه وقبل علامات الترقيم، وتوحيد الشرطة المائلة بين رقمين، وتحويل `1442 هـ` إلى `1442هـ`.
 
-### ١١. البنية
+### ١٣. البنية
 
 - **العناوين** — بحجم الخط مقارنًا بحجم المتن الغالب، أو بأنماط `الباب / الفصل / المادة` في نمط الأنظمة السعودية
-- **الفقرات** — تُلَمّ الأسطر المكسورة في فقرة واحدة بالاعتماد على الفجوة الرأسية (`> 0.75 ×` ارتفاع السطر يبدأ فقرة)
+- **الفقرات** — تُلَمّ الأسطر المكسورة في فقرة واحدة بالاعتماد على الفجوة الرأسية (`> 0.75 ×` ارتفاع السطر يبدأ فقرة). وعند **حدّ الصفحة** لا تنفع الفجوة: `y` يعود إلى أعلى الصفحة التالية فتخرج سالبة. فيُحكم بالترقيم وحده — الصفحة السابقة انتهت بنهاية جملة ⇐ فقرة جديدة، وإلا بقيت الفقرة موصولة كما انسابت. وكذلك تنفصل الصفحة المقروءة بالـOCR عمّا قبلها: المرفق الممسوح مصدرٌ آخر لا يكمل جملة متنٍ مكتوب
 - **البنود المرقّمة** — `1-` و`3/1-` تُحفظ بترقيمها الأصلي دون إعادة ترقيم
 - **الحواشي** — تُلتقط بحجم الخط الأصغر في النصف السفلي، وتُؤجَّل حتى نهاية القسم لئلا تقطع الفقرات
 - **الترويسة والتذييل** — تُرصدان بتكرارهما عبر الصفحات وتُحذفان
@@ -164,6 +195,15 @@
 - **الجداول** — صفوف الجدول المرصودة هندسيًا (أربعة أجزاء فأكثر تفصلها فجوات أوسع من `CELL_GAP`) تُجمَّع في جدول Markdown حقيقي؛ صفّان متتاليان على الأقل، والصف المعزول يبقى فقرة
 
 العنوان يشترط **شكل العنوان** لا مجرد كِبَر حجم الخط: الجملة المنتهية بنقطة أو فاصلة ليست عنوانًا مهما كبر خطها. بدون هذا الشرط تنقلب صفحة محشوّة بنص صغير كثيف فيصير متنها عناوين.
+
+ويشترط معه **أن يفتتح العنوان ما بعده**: السطر الذي يسبقه فقرةٌ لم تُختم جملتها هو تكملتها لا عنوانٌ جديد، مهما كبر خطه. بدون هذا الشرط يُقتطع نصفُ جملة عنوانًا — «…أرفع أسمى عبارات الشكر إلى مقام» ثم **«سيدي صاحب السمو…»** بخط أعرض — فتنقطع الجملة ويدخل نصفها الفهرس، بينما تبقى بقيّة الكتلة نفسها فقرةً لأنها تنتهي بفاصلة، فينشطر بلوك بصري واحد عنوانًا وفقرة. والشرط مقصور على ما سبقه **فقرة**، لأن العنوان يتلو العنوان كثيرًا («الباب الأول» ثم «الفصل الأول») وكلاهما بلا نقطة.
+
+ويُستثنى صراحةً ما ليس عنوانًا وإن حقّق كل شرط شكلي:
+
+| المستثنى | لماذا |
+|---|---|
+| **البسملة** | افتتاحٌ ديني يتصدّر أكثر المستندات العربية الرسمية، يُصفّ عريضًا كبيرًا — ولا قسم تحته ولا معنى لإدراجه في فهرس |
+| **ما دون ثلاثة حروف** | سطر الـOCR المشوّش (`© 5ه`) يخرج بخط كبير فيُرقّى عنوانًا ويدخل الفهرس، فيلوّث بنية المستند بضجيج |
 
 ---
 
@@ -179,7 +219,7 @@ pip install -r requirements.txt
 
 المتطلبات: `PyMuPDF` و`numpy` و`PyQt6` — وبايثون ٣٫٩ فأحدث. (`PyQt6` لازم للواجهة فقط؛ سطر الأوامر يعمل بدونه.)
 
-**Tesseract اختياري** — لازم فقط للصفحات الممسوحة ضوئيًا وللملفات ذات خريطة الخط المكسورة (القسم ٩). بدونه تعمل الأداة كاملةً على بقية الملفات، وتحذّرك حين تصادف صفحة تحتاجه:
+**Tesseract اختياري** — لازم فقط للصفحات الممسوحة ضوئيًا وللملفات ذات خريطة الخط المكسورة (القسم ١١). بدونه تعمل الأداة كاملةً على بقية الملفات، وتحذّرك حين تصادف صفحة تحتاجه:
 
 </div>
 
@@ -213,6 +253,20 @@ pip install -r requirements.txt
 | سطر الأوامر | `python main.py ملف.pdf -o مخرج.md` |
 
 `run.bat` و`run.sh` يكتشفان مسار المشروع ويثبّتان المتطلبات تلقائيًّا لو كانت ناقصة.
+
+### حكم الفحص التشخيصي
+
+الفحص يعرض جدول «قبل/بعد» لثماني كلمات مؤشّرة من معجم الأنظمة السعودية (`المادة`، `اللائحة`، `المملكة`…). وهي كلمات دلالتها قاطعة حين تظهر، لكن **غيابها لا يدلّ على شيء**: المستند الذي لا يذكرها — خطاب أو مذكرة أو عقد — يخرج جدوله أصفارًا كلَّه وإن كان كل رباط فيه مقلوبًا.
+
+لذلك لا يُبنى الحكم على الجدول وحده، بل على **عدد الرباطات التي أصلحها المحرّك فعلًا** في العيّنة:
+
+| الجدول | الرباطات المُصلَحة | الحكم |
+|---|---|---|
+| صفر | صفر | الملف سليم — لا حاجة للإصلاح |
+| صفر | `> 0` | لم تظهر الكلمات المؤشّرة، لكن الملف يحتاج الإصلاح — فلا تعطّله بـ`--no-ligatures` |
+| `> 0` | — | رُصد التلف، ويُقال كم أُصلح منه وكم بقي |
+
+الفرق ليس في الرسالة وحدها: «الملف سليم» تُغري بـ`--no-ligatures` أو بترك الأداة أصلًا، فيخرج النص `هللا` و`السالم` و`األعمال`.
 
 ### أمثلة سطر الأوامر
 
@@ -270,7 +324,7 @@ python main.py --help
 | **نطاق الصفحات** | للتجربة على جزء قبل تحويل الملف كاملًا |
 | **فجوة الفقرة** | ضبط حساسية لَمّ الأسطر في فقرة |
 | **الحواشي** | اقتباس منفصل `>` أو ضمن النص أو حذف |
-| **زر الفحص التشخيصي** | جدول قبل/بعد لثماني كلمات مؤشّرة + عيّنة نص + هل الملف مصوّر يحتاج OCR |
+| **زر الفحص التشخيصي** | جدول قبل/بعد لثماني كلمات مؤشّرة + عدد الرباطات المُصلَحة + عيّنة نص + هل الملف مصوّر يحتاج OCR |
 | **الجداول** | تجميع صفوف الجداول المرصودة في جداول Markdown — يمكن تعطيله |
 | **تبويب المعاينة** | الناتج مباشرة قبل الحفظ |
 | **تبويب السجل** | تفاصيل التنفيذ وأي أخطاء |
@@ -383,7 +437,7 @@ Error: Found main.py but it does not export a top-level "app", "application", or
 
 ## الحدود المعروفة
 
-- **الملفات المصوّرة** (بلا طبقة نص) تُقرأ بالـOCR إن كان Tesseract مثبَّتًا (القسم ٩)، وإلا فهي خارج نطاق الأداة والفحص التشخيصي يخبرك بذلك.
+- **الملفات المصوّرة** (بلا طبقة نص) تُقرأ بالـOCR إن كان Tesseract مثبَّتًا (القسم ١١)، وإلا فهي خارج نطاق الأداة والفحص التشخيصي يخبرك بذلك.
 - **دقّة الـOCR ليست دقّة طبقة النص.** الحروف العربية تخرج سليمة في الغالب، لكن الأرقام الهندية تُقرأ خطأً كثيرًا (`١٤٤٧` ← `VEEV`)، ويقرأ المميِّز أحيانًا كلمة عربية حروفًا لاتينية حين تكون `eng` ضمن اللغات. للمستند العربي الخالص: `--ocr-lang ara` أنقى بكثير. راجع الأرقام في الناتج دائمًا.
 - **الـOCR يبطئ التحويل** — نحو ثانيتين إلى أربع لكل صفحة عند ٣٠٠ نقطة/بوصة. لا يُشغَّل إلا على الصفحة التي يثبت عطبها، ولا يُحسب حكمُه أصلًا إن كان Tesseract غائبًا، و`--ocr never` تعطّله كليًا.
 - **كشف الجداول هندسي** — الصف يحتاج أربعة أجزاء فأكثر تفصلها فجوات أوسع من `CELL_GAP`، ويحتاج صفّين متتاليين على الأقل ليصير جدولًا. الجداول غير المنتظمة أو المدموجة الخلايا تخرج فقرات، و`--no-tables` تعطّل الميزة كليًا.
@@ -543,9 +597,13 @@ No dictionary, no guessing. Every fix is a geometric rule derived from glyph coo
 
 7. **Floating diacritics** — diacritics are exported as separate units and may **precede** their base letter in the stream. Each mark is bound to the Arabic letter that geometrically contains its position (nearest Arabic letter to the mark's centre), not to the previous letter in the stream. Without this you get `يوما.ً` instead of `يوماً.`
 
-8. **Final cleanup** — strip bidi control characters (`200E` `200F` `202A-202E` `2066-2069` `00AD` `FEFF`), apply `NFC`, remove spaces after opening and before closing brackets and before punctuation, normalise the slash between digits, and join `1442 هـ` into `1442هـ`.
+8. **Justification kashida** — the Pages/Quartz justifier pads lines with hair-thin *tatweel* glyphs (`ـ` U+0640, under one point wide, each in its own span at a different font size) between joined letters — 400 of them on a single page; Word's kashida means the same thing, only wider. The tatweel used to be treated as a diacritic and glued to the nearest letter, coming out as `اتقـدم` or `رقمـ` (with the tatweel at the end of the word although it sits between *qaf* and *meem*). It is now a positioned unit, and the rule is positional, not width-based: a tatweel between two Arabic letters inside a word is padding and is dropped; one followed by a space, a digit, or the line end is content and stays (`1448هـ`, `بـ`, `الـ 30`). The letter after a dropped tatweel is marked *glue* so the gap rule cannot re-insert a space in the hole it leaves.
 
-9. **Structure** — headings by font size **and heading shape** (a line ending in a full stop is never a heading, however large its font — without that guard a page dense with small text inverts and its body becomes headings), or `الباب / الفصل / المادة` patterns in the Saudi-law profile; broken lines reflowed into paragraphs by vertical gap; numbered items kept with their original numbering; detected table rows assembled into real Markdown tables; footnotes captured by smaller font size in the lower half and deferred to the end of the section; repeated headers/footers detected by recurrence across pages and dropped; watermarks dropped by transparency or tilt; the original table of contents skipped and replaced by a generated one with lowercased, collision-resolved anchors.
+9. **Visually stored brackets** — brackets are *mirrored* characters: `(` in Arabic text is drawn with the `)` glyph. Some producers (Quartz) write the drawn glyph into the stream instead of the logical character, so after right-to-left visual sorting you get `)مرفق1(`; others (Word) write the logical character and come out right, and nothing in `rawdict` says which. The decision comes from context: a bracket preceded by a space and followed by a letter *acts* as an opener; one preceded by a letter and followed by a space or punctuation acts as a closer. Each bracket votes "logical" if its role matches its shape and "visual" otherwise (ambiguous ones abstain), and if "visual" wins on the page every bracket on it is mirrored (`()[]{}<>«»‹›`). The vote is page-wide, not per bracket — one bracket may open on one line and close on the next — and Latin lines are never touched. It runs *before* final cleanup, which strips the space after `(` and before `)` by shape and would otherwise both destroy the evidence and fuse `(مرفق3(أي`.
+
+10. **Final cleanup** — strip bidi control characters (`200E` `200F` `202A-202E` `2066-2069` `00AD` `FEFF`), apply `NFC`, remove spaces after opening and before closing brackets and before punctuation, normalise the slash between digits, and join `1442 هـ` into `1442هـ`.
+
+11. **Structure** — headings by font size **and heading shape** (a line ending in a full stop is never a heading, however large its font — without that guard a page dense with small text inverts and its body becomes headings), or `الباب / الفصل / المادة` patterns in the Saudi-law profile; broken lines reflowed into paragraphs by vertical gap; numbered items kept with their original numbering; detected table rows assembled into real Markdown tables; footnotes captured by smaller font size in the lower half and deferred to the end of the section; repeated headers/footers detected by recurrence across pages and dropped; watermarks dropped by transparency or tilt; the original table of contents skipped and replaced by a generated one with lowercased, collision-resolved anchors.
 
 ## Install & run
 
