@@ -2,14 +2,23 @@ version: 2
 
 # PyMuPDF غلاف على MuPDF وهي مكتبة C تحلّل ملفات PDF غير موثوقة، فإصلاحاتها
 # الأمنية تستحق PR تلقائيًا لا انتظار ترقية يدوية.
+# التحديثات العادية مجمّعة شهريًا (PR واحد لكل مجموعة، والرئيسية منفصلة)؛
+# أما إصلاحات الأمان فتصل فورًا عبر Dependabot security updates ولا تتقيّد بهذا الجدول.
 updates:
   - package-ecosystem: pip
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      major:
+        patterns: ["*"]
+        update-types: ["major"]
 
   - package-ecosystem: github-actions
     directory: "/"
@@ -17,3 +26,6 @@ updates:
       interval: monthly
     commit-message:
       prefix: "ci"
+    groups:
+      github-actions:
+        patterns: ["*"]
